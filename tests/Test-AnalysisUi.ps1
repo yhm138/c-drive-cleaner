@@ -37,12 +37,13 @@ try {
     if (@($many.Nodes | Where-Object { $_.Text -like '*5,100*' }).Count -ne 1) { throw 'Direct-files leaf missing.' }
     if ($denseList.Items.Count -ne 1 -or $largeFileList.Items.Count -lt 1) { throw 'Lists not filled.' }
     if (@($suggestionList.Items | Where-Object { $_.SubItems[3].Text -like '*node_modules' }).Count -ne 1) { throw 'Suggestion missing from list.' }
-    # Raise the protected column-click handler the same way a mouse click does.
-    $onColumnClick = [Windows.Forms.ListView].GetMethod('OnColumnClick', [Reflection.BindingFlags]'NonPublic,Instance')
-    $onColumnClick.Invoke($largeFileList, @((New-Object Windows.Forms.ColumnClickEventArgs(3))))
-    $onColumnClick.Invoke($largeFileList, @((New-Object Windows.Forms.ColumnClickEventArgs(3))))
+    Sort-AnalysisList -List $largeFileList -Column 3
+    Sort-AnalysisList -List $largeFileList -Column 3
     if ($largeFileList.Tag.SortColumn -ne 3 -or $largeFileList.Tag.Descending) { throw 'Column sort state wrong.' }
-    Invoke-ColumnClick $denseList 0
+    Sort-AnalysisList -List $largeFileList -Column 0
+    $sizes = @($largeFileList.Tag.Data | ForEach-Object { $_.Logical })
+    for ($i = 1; $i -lt $sizes.Count; $i++) { if ($sizes[$i - 1] -lt $sizes[$i]) { throw 'Numeric size sort wrong.' } }
+    Sort-AnalysisList -List $denseList -Column 0
     [void]$largeFileList.Handle
     $analysisTabs.SelectedIndex = 1
     $largeFileList.Items[0].Selected = $true
