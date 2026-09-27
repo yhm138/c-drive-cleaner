@@ -1,0 +1,6 @@
+/dist/
+/tests/TestResults/
+*.log
+.DS_Store
+Thumbs.db
+Desktop.ini
