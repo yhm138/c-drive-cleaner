@@ -10,6 +10,10 @@ param(
     [ValidateSet('true', 'false')][string]$PresetStopAtGoal = 'true',
     [string]$OriginalSid = '',
     [ValidateSet(7, 30)][int]$PresetLogKeepDays = 7,
+    [switch]$AnalyzeOnly,
+    [string]$AnalyzeRoot = 'C:\',
+    [switch]$ScheduledClean,
+    [string]$ScheduleConfigPath = '',
     [hashtable]$WorkerRequest,
     [hashtable]$WorkerState,
     [System.Threading.CancellationTokenSource]$WorkerCancellation
@@ -18,7 +22,9 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+$script:AppVersion = '2.0.0'
 $script:ScriptPath = $MyInvocation.MyCommand.Path
+$script:ScheduleConfigOverride = $ScheduleConfigPath
 $script:IsAdministrator = $false
 $script:Items = @()
 $script:RowsById = @{}
@@ -87,7 +93,8 @@ function Add-CleanupItem {
         [bool]$UseLogRetention = $false,
         [string[]]$FilePatterns = @('*'),
         [bool]$SetupGuard = $false,
-        [string]$ManageUri = ''
+        [string]$ManageUri = '',
+        [bool]$ScheduleSafe = $false
     )
 
     [void]$List.Add([pscustomobject]@{
@@ -105,6 +112,7 @@ function Add-CleanupItem {
         FilePatterns = @($FilePatterns)
         SetupGuard = $SetupGuard
         ManageUri = $ManageUri
+        ScheduleSafe = $ScheduleSafe
         ScanIssues = 0
         EstimatedBytes = [Int64]0
         ScanStatus = '未扫描'
@@ -296,23 +304,23 @@ function Add-ExtendedCleanupItems {
         -PathSpecs @(Get-ExtendedElectronPathSpecs -ProfileRoots $larkProfiles -Offline) -ProcessNames @('Lark', 'Feishu', 'LarkShell') `
         -Description '会丢失已缓存的离线网页或文档内容；需要联网重新加载，部分内容可能无法恢复离线可用。优先在飞书内管理，关闭飞书后再手动选择。'
 
-    Add-CleanupItem -List $List -Id 'wechat-old-logs' -Name '微信旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+    Add-CleanupItem -List $List -Id 'wechat-old-logs' -ScheduleSafe $true -Name '微信旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:APPDATA 'Tencent\xwechat\log'), (Join-Path $env:APPDATA 'Tencent\WeChat\log'))) `
         -UseLogRetention $true -FilePatterns @('*.xlog', '*.log') -ProcessNames @('WeChat', 'Weixin', 'WeChatAppEx') `
         -Description '按上方日志保留天数清理旧 .xlog/.log；保留近期文件及日志内存映射文件，不涉及聊天记录、附件和账户数据库。先退出微信。'
-    Add-CleanupItem -List $List -Id 'trae-old-logs' -Name 'TRAE 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+    Add-CleanupItem -List $List -Id 'trae-old-logs' -ScheduleSafe $true -Name 'TRAE 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:APPDATA 'Trae\logs'), (Join-Path $env:APPDATA 'TRAE CN\logs'), (Join-Path $env:APPDATA 'TRAE SOLO\logs'), (Join-Path $env:APPDATA 'TRAE SOLO CN\logs'))) `
         -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('Trae', 'Trae CN', 'TRAE SOLO', 'TRAE SOLO CN') `
         -Description '仅在各 TRAE 配置的 logs 目录按保留天数清理旧日志；保留项目、会话、扩展及运行工具。先关闭 TRAE。'
-    Add-CleanupItem -List $List -Id 'wolfram-old-logs' -Name 'Wolfram 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+    Add-CleanupItem -List $List -Id 'wolfram-old-logs' -ScheduleSafe $true -Name 'Wolfram 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:LOCALAPPDATA 'Wolfram\Logs'))) `
         -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('Mathematica', 'WolframKernel', 'wolframscript', 'Wolfram') `
         -Description '按保留天数清理 Wolfram\Logs 中的旧日志；不涉及 Paclet、笔记本及安装组件。先退出 Wolfram 程序。'
     $codexLogRoots = @(Get-ExtendedAppRoots -PackagePattern 'OpenAI.Codex_*' -PackageRelativePath 'LocalCache\Local\Codex\Logs' -FallbackPaths @((Join-Path $env:LOCALAPPDATA 'Codex\Logs')))
-    Add-CleanupItem -List $List -Id 'codex-old-logs' -Name 'Codex 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+    Add-CleanupItem -List $List -Id 'codex-old-logs' -ScheduleSafe $true -Name 'Codex 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths $codexLogRoots) -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('Codex') `
         -Description '按保留天数清理桌面应用 Logs 目录中的旧日志；保留 .codex 中的任务历史、数据库和所有工作文件。先关闭 Codex。'
-    Add-CleanupItem -List $List -Id 'clash-old-logs' -Name 'Clash Verge 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+    Add-CleanupItem -List $List -Id 'clash-old-logs' -ScheduleSafe $true -Name 'Clash Verge 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:APPDATA 'io.github.clash-verge-rev.clash-verge-rev\logs'))) `
         -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('clash-verge', 'verge-mihomo', 'mihomo') `
         -Description '按保留天数清理已识别 logs 目录中的旧日志；近期增长的日志不会清理。保留订阅和规则配置，先退出 Clash Verge。'
@@ -381,6 +389,10 @@ function Get-CleanupCatalog {
     Add-CleanupItem -List $list -Id 'user-temp' -Name '用户临时文件' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(New-PathSpec -Path (Join-Path $env:LOCALAPPDATA 'Temp') -AllowedRoot $env:LOCALAPPDATA) `
         -Description '清除当前用户临时目录中所有未被占用的内容；正在使用的文件会跳过。可能影响等待重启的安装程序，需手动选择。'
+
+    Add-CleanupItem -List $list -Id 'user-temp-old' -Name '用户临时文件（7 天前）' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(New-PathSpec -Path (Join-Path $env:LOCALAPPDATA 'Temp') -AllowedRoot $env:LOCALAPPDATA) -MinAgeDays 7 -ScheduleSafe $true `
+        -Description '只删除临时目录中 7 天内未修改的文件，保留目录结构和近期文件；正在使用的文件会跳过。与 Windows 存储感知的临时文件清理规则相近，可加入定时清理。'
 
     Add-CleanupItem -List $list -Id 'pip-cache' -Name 'pip 下载缓存' -Risk '低' -DefaultSelected $true -RequiresAdmin $false -Action 'Paths' `
         -PathSpecs @(New-PathSpec -Path (Join-Path $env:LOCALAPPDATA 'pip\Cache') -AllowedRoot (Join-Path $env:LOCALAPPDATA 'pip')) `
@@ -1059,6 +1071,1751 @@ function Invoke-CleanupAction {
 }
 
 
+function Initialize-DiskAnalyzer {
+    if ($null -ne ('DiskAnalyzer' -as [type])) { return }
+    try {
+        Add-Type -ReferencedAssemblies 'System.Core' -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using Microsoft.Win32.SafeHandles;
+
+// Read-only disk space analyzer. Two engines produce the same result model:
+//  * NTFS MFT reader: reads the master file table of a volume sequentially (requires
+//    administrator rights), which is how WizTree-class tools reach their speed.
+//  * Enumeration: multi-threaded FindFirstFileEx walk that never follows reparse points.
+// Nothing in this file writes to or deletes from the scanned volume.
+public sealed class DiskDirNode
+{
+    public int Index;
+    public int Parent = -1;
+    public string Name;
+    public long Alloc;
+    public long Logical;
+    public long Files;
+    public long Dirs;
+    public long DirectFiles;
+    public long DirectAlloc;
+    public long DirectLogical;
+    public bool CacheTag;
+    public bool VenvMarker;
+    public List<int> Children;
+}
+
+public sealed class DiskFileEntry
+{
+    public int Parent;
+    public string Name;
+    public long Alloc;
+    public long Logical;
+    public DateTime LastWriteUtc;
+    public string Path;
+    public string Extension
+    {
+        get
+        {
+            int dot = Name.LastIndexOf('.');
+            return dot <= 0 || dot == Name.Length - 1 ? "" : Name.Substring(dot + 1).ToLowerInvariant();
+        }
+    }
+}
+
+public sealed class DiskExtStat
+{
+    public string Extension;
+    public long Count;
+    public long Alloc;
+    public long Logical;
+}
+
+public sealed class DiskDenseDir
+{
+    public int Node;
+    public string Path;
+    public long Files;
+    public long Alloc;
+    public long Logical;
+    public long AverageBytes;
+}
+
+public sealed class DiskSuggestion
+{
+    public string Path;
+    public bool IsDirectory;
+    public string Category;
+    public string Risk;
+    public long Bytes;
+    public string Advice;
+    public bool CanRecycle;
+    public string CatalogId;
+}
+
+public sealed class DiskAnalysisResult
+{
+    public string Root;
+    public string Mode;
+    public List<DiskDirNode> Nodes = new List<DiskDirNode>();
+    public List<DiskFileEntry> TopFiles = new List<DiskFileEntry>();
+    public List<DiskFileEntry> LargeFiles = new List<DiskFileEntry>();
+    public List<DiskDenseDir> DenseDirs = new List<DiskDenseDir>();
+    public List<DiskExtStat> Extensions = new List<DiskExtStat>();
+    public List<DiskSuggestion> Suggestions = new List<DiskSuggestion>();
+    public long TotalFiles;
+    public long TotalDirs;
+    public long TotalAlloc;
+    public long TotalLogical;
+    public long Errors;
+    public double Seconds;
+    public string FallbackReason = "";
+    private string[] pathCache;
+
+    public string GetPath(int index)
+    {
+        if (index < 0 || index >= Nodes.Count) return null;
+        if (pathCache == null) pathCache = new string[Nodes.Count];
+        if (pathCache[index] != null) return pathCache[index];
+        List<int> chain = new List<int>();
+        int current = index;
+        int guard = 0;
+        while (current > 0 && pathCache[current] == null && guard++ < 4096)
+        {
+            chain.Add(current);
+            current = Nodes[current].Parent;
+        }
+        string basePath = current <= 0 ? Root.TrimEnd('\\') : pathCache[current];
+        if (current == 0) pathCache[0] = Root;
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            basePath = basePath.TrimEnd('\\') + "\\" + Nodes[chain[i]].Name;
+            pathCache[chain[i]] = basePath;
+        }
+        return index == 0 ? Root : pathCache[index];
+    }
+
+    public int[] GetChildren(int index)
+    {
+        if (index < 0 || index >= Nodes.Count || Nodes[index].Children == null) return new int[0];
+        List<int> children = new List<int>(Nodes[index].Children);
+        children.Sort(delegate (int a, int b)
+        {
+            int c = Nodes[b].Alloc.CompareTo(Nodes[a].Alloc);
+            return c != 0 ? c : String.Compare(Nodes[a].Name, Nodes[b].Name, StringComparison.OrdinalIgnoreCase);
+        });
+        return children.ToArray();
+    }
+
+    public int FindDirectory(string path)
+    {
+        if (String.IsNullOrEmpty(path) || Nodes.Count == 0) return -1;
+        string full = path.Replace('/', '\\').TrimEnd('\\');
+        string root = Root.TrimEnd('\\');
+        if (full.Equals(root, StringComparison.OrdinalIgnoreCase)) return 0;
+        if (!full.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase)) return -1;
+        string[] parts = full.Substring(root.Length + 1).Split('\\');
+        int node = 0;
+        foreach (string part in parts)
+        {
+            if (part.Length == 0) continue;
+            List<int> children = Nodes[node].Children;
+            int next = -1;
+            if (children != null)
+            {
+                foreach (int child in children)
+                {
+                    if (String.Equals(Nodes[child].Name, part, StringComparison.OrdinalIgnoreCase)) { next = child; break; }
+                }
+            }
+            if (next < 0) return -1;
+            node = next;
+        }
+        return node;
+    }
+}
+
+public sealed class DiskAnalyzer
+{
+    public const int TopFileCount = 1000;
+    public const long LargeFileThreshold = 16L * 1024 * 1024;
+    public long MinDenseFiles = 5000;
+    public long MaxDenseAverage = 128L * 1024;
+
+    public volatile string Phase = "准备";
+    public volatile string CurrentPath = "";
+    public long FilesScanned;
+    public long DirsScanned;
+    public long BytesRead;
+    public long TotalBytesToRead;
+
+    private CancellationToken token;
+    private readonly object sync = new object();
+    private CancellationTokenSource background;
+    public volatile bool Completed;
+    public DiskAnalysisResult Result;
+    public Exception Error;
+    public DateTime StartedUtc;
+
+    // Runs Analyze on a background thread; the caller polls Completed/Result/Error.
+    public void Start(string root, bool preferMft)
+    {
+        if (background != null && !Completed) throw new InvalidOperationException("分析已在进行中");
+        background = new CancellationTokenSource();
+        Completed = false;
+        Result = null;
+        Error = null;
+        StartedUtc = DateTime.UtcNow;
+        CancellationToken local = background.Token;
+        Thread thread = new Thread(delegate ()
+        {
+            try { Result = Analyze(root, preferMft, local); }
+            catch (Exception ex) { Error = ex; }
+            finally { Completed = true; }
+        });
+        thread.IsBackground = true;
+        thread.Priority = ThreadPriority.BelowNormal;
+        thread.Start();
+    }
+
+    public void Cancel()
+    {
+        if (background != null) background.Cancel();
+    }
+
+    // Accumulator shared by both engines.
+    private List<DiskDirNode> nodes;
+    private List<DiskFileEntry> heap;
+    private List<DiskFileEntry> large;
+    private Dictionary<string, DiskExtStat> extensions;
+    private long errors;
+    private long clusterSize = 4096;
+
+    public DiskAnalysisResult Analyze(string root, bool preferMft, CancellationToken cancellation)
+    {
+        token = cancellation;
+        DateTime started = DateTime.UtcNow;
+        string full = System.IO.Path.GetFullPath(root);
+        if (!full.EndsWith("\\")) full += "\\";
+        if (!Directory.Exists(full)) throw new DirectoryNotFoundException(full);
+        string volumeRoot = System.IO.Path.GetPathRoot(full);
+        bool isVolumeRoot = volumeRoot.Length == 3 && full.Equals(volumeRoot, StringComparison.OrdinalIgnoreCase);
+        DiskAnalysisResult result = null;
+        string reason = "";
+        clusterSize = QueryClusterSize(volumeRoot);
+        if (preferMft && isVolumeRoot)
+        {
+            try
+            {
+                using (VolumeSource source = WindowsVolumeSource.Open(volumeRoot.Substring(0, 2)))
+                {
+                    result = AnalyzeMft(source, volumeRoot);
+                }
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                reason = ex.Message;
+                result = null;
+            }
+        }
+        else if (preferMft) reason = "只有整个分区根目录支持 MFT 直读";
+        if (result == null)
+        {
+            result = AnalyzeEnumeration(full);
+            result.FallbackReason = reason;
+        }
+        result.Seconds = (DateTime.UtcNow - started).TotalSeconds;
+        return result;
+    }
+
+    // Used by tests to parse an NTFS image file. The image is only opened for reading.
+    public DiskAnalysisResult AnalyzeNtfsImage(string imagePath, string displayRoot, CancellationToken cancellation)
+    {
+        token = cancellation;
+        DateTime started = DateTime.UtcNow;
+        using (VolumeSource source = new StreamVolumeSource(new FileStream(imagePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
+        {
+            DiskAnalysisResult result = AnalyzeMft(source, displayRoot);
+            result.Seconds = (DateTime.UtcNow - started).TotalSeconds;
+            return result;
+        }
+    }
+
+    private void Reset()
+    {
+        nodes = new List<DiskDirNode>();
+        heap = new List<DiskFileEntry>();
+        large = new List<DiskFileEntry>();
+        extensions = new Dictionary<string, DiskExtStat>(StringComparer.OrdinalIgnoreCase);
+        errors = 0;
+        FilesScanned = 0;
+        DirsScanned = 0;
+        BytesRead = 0;
+        TotalBytesToRead = 0;
+    }
+
+    private static long QueryClusterSize(string volumeRoot)
+    {
+        try
+        {
+            uint sectorsPerCluster, bytesPerSector, freeClusters, totalClusters;
+            if (NativeMethods.GetDiskFreeSpaceW(volumeRoot, out sectorsPerCluster, out bytesPerSector, out freeClusters, out totalClusters))
+            {
+                long size = (long)sectorsPerCluster * bytesPerSector;
+                if (size > 0) return size;
+            }
+        }
+        catch (Exception) { }
+        return 4096;
+    }
+
+    // ---- shared accumulation helpers ----
+
+    private void AddFile(int parent, string name, long alloc, long logical, DateTime lastWriteUtc,
+        List<DiskFileEntry> localHeap, List<DiskFileEntry> localLarge, Dictionary<string, DiskExtStat> localExt)
+    {
+        DiskFileEntry entry = null;
+        if (localHeap.Count < TopFileCount || alloc > localHeap[0].Alloc || logical >= LargeFileThreshold)
+        {
+            entry = new DiskFileEntry();
+            entry.Parent = parent;
+            entry.Name = name;
+            entry.Alloc = alloc;
+            entry.Logical = logical;
+            entry.LastWriteUtc = lastWriteUtc;
+            if (localHeap.Count < TopFileCount) HeapPush(localHeap, entry);
+            else if (alloc > localHeap[0].Alloc) HeapReplaceTop(localHeap, entry);
+            if (logical >= LargeFileThreshold || alloc >= LargeFileThreshold) localLarge.Add(entry);
+        }
+        int dot = name.LastIndexOf('.');
+        string ext = dot <= 0 || dot == name.Length - 1 || name.Length - dot > 16 ? "" : name.Substring(dot + 1);
+        DiskExtStat stat;
+        if (!localExt.TryGetValue(ext, out stat))
+        {
+            stat = new DiskExtStat();
+            stat.Extension = ext.ToLowerInvariant();
+            localExt[ext] = stat;
+        }
+        stat.Count++;
+        stat.Alloc += alloc;
+        stat.Logical += logical;
+    }
+
+    private static void HeapPush(List<DiskFileEntry> h, DiskFileEntry e)
+    {
+        h.Add(e);
+        int i = h.Count - 1;
+        while (i > 0)
+        {
+            int p = (i - 1) / 2;
+            if (h[p].Alloc <= h[i].Alloc) break;
+            DiskFileEntry t = h[p]; h[p] = h[i]; h[i] = t;
+            i = p;
+        }
+    }
+
+    private static void HeapReplaceTop(List<DiskFileEntry> h, DiskFileEntry e)
+    {
+        h[0] = e;
+        int i = 0;
+        int n = h.Count;
+        while (true)
+        {
+            int l = 2 * i + 1, r = l + 1, m = i;
+            if (l < n && h[l].Alloc < h[m].Alloc) m = l;
+            if (r < n && h[r].Alloc < h[m].Alloc) m = r;
+            if (m == i) break;
+            DiskFileEntry t = h[m]; h[m] = h[i]; h[i] = t;
+            i = m;
+        }
+    }
+
+    private static void MergeExt(Dictionary<string, DiskExtStat> target, Dictionary<string, DiskExtStat> source)
+    {
+        foreach (KeyValuePair<string, DiskExtStat> pair in source)
+        {
+            DiskExtStat stat;
+            if (!target.TryGetValue(pair.Key, out stat)) { target[pair.Key] = pair.Value; continue; }
+            stat.Count += pair.Value.Count;
+            stat.Alloc += pair.Value.Alloc;
+            stat.Logical += pair.Value.Logical;
+        }
+    }
+
+    private static void MarkSpecialFile(DiskDirNode parent, string name)
+    {
+        if (name.Equals("CACHEDIR.TAG", StringComparison.OrdinalIgnoreCase)) parent.CacheTag = true;
+        else if (name.Equals("pyvenv.cfg", StringComparison.OrdinalIgnoreCase)) parent.VenvMarker = true;
+    }
+
+    // ---- NTFS MFT engine ----
+
+    // Attributes gathered from one MFT record. Records with an attribute list can spread
+    // names and data over extension records; those parts are merged into the base record.
+    private sealed class RecordInfo
+    {
+        public string Name;
+        public int NameRank = -1;
+        public long ParentRef = -1;
+        public bool IsDirectory;
+        public long Alloc;
+        public long Logical;
+        public bool HasData;
+        public DateTime LastWriteUtc = DateTime.MinValue;
+
+        public void Merge(RecordInfo other)
+        {
+            if (other.NameRank > NameRank) { Name = other.Name; NameRank = other.NameRank; ParentRef = other.ParentRef; }
+            Alloc += other.Alloc;
+            if (other.HasData) { Logical = other.Logical; HasData = true; }
+            if (other.LastWriteUtc > LastWriteUtc) LastWriteUtc = other.LastWriteUtc;
+        }
+    }
+
+    private DiskAnalysisResult AnalyzeMft(VolumeSource source, string rootDisplay)
+    {
+        Reset();
+        Phase = "读取 NTFS 引导扇区";
+        byte[] boot = new byte[512];
+        source.ReadExact(0, boot, 512);
+        if (Encoding.ASCII.GetString(boot, 3, 8) != "NTFS    ") throw new InvalidDataException("不是 NTFS 分区");
+        int bytesPerSector = BitConverter.ToUInt16(boot, 0x0B);
+        int sectorsPerCluster = boot[0x0D];
+        if (sectorsPerCluster > 128) sectorsPerCluster = 1 << (256 - sectorsPerCluster);
+        long cluster = (long)bytesPerSector * sectorsPerCluster;
+        if (bytesPerSector < 512 || cluster <= 0) throw new InvalidDataException("NTFS 引导扇区无效");
+        clusterSize = cluster;
+        long mftLcn = BitConverter.ToInt64(boot, 0x30);
+        sbyte clustersPerRecord = unchecked((sbyte)boot[0x40]);
+        int recordSize = clustersPerRecord > 0 ? (int)(clustersPerRecord * cluster) : 1 << -clustersPerRecord;
+        if (recordSize < 512 || recordSize > 65536) throw new InvalidDataException("MFT 记录大小无效");
+
+        byte[] first = new byte[Math.Max(recordSize, (int)Math.Min(cluster, 65536))];
+        int firstRead = (int)Math.Max(recordSize, cluster);
+        if (firstRead > first.Length) first = new byte[firstRead];
+        source.ReadExact(mftLcn * cluster, first, firstRead);
+        if (!ApplyFixup(first, 0, recordSize)) throw new InvalidDataException("$MFT 记录校验失败");
+        List<long[]> runs = null;
+        long mftSize = 0;
+        byte[] attributeList = null;
+        List<long[]> attributeListRuns = null;
+        long attributeListSize = 0;
+        ForEachAttribute(first, 0, recordSize, delegate (int a, int type, int len)
+        {
+            if (type == 0x80 && first[a + 8] != 0 && first[a + 9] == 0 && BitConverter.ToInt64(first, a + 0x10) == 0)
+            {
+                runs = DecodeRuns(first, a + BitConverter.ToUInt16(first, a + 0x20), a + len);
+                mftSize = BitConverter.ToInt64(first, a + 0x38);
+            }
+            else if (type == 0x20 && first[a + 8] == 0)
+            {
+                int valueLength = BitConverter.ToInt32(first, a + 0x10);
+                int valueOffset = BitConverter.ToUInt16(first, a + 0x14);
+                if (valueLength > 0 && a + valueOffset + valueLength <= a + len)
+                {
+                    attributeList = new byte[valueLength];
+                    Buffer.BlockCopy(first, a + valueOffset, attributeList, 0, valueLength);
+                }
+            }
+            else if (type == 0x20)
+            {
+                attributeListRuns = DecodeRuns(first, a + BitConverter.ToUInt16(first, a + 0x20), a + len);
+                attributeListSize = BitConverter.ToInt64(first, a + 0x30);
+            }
+        });
+        if (attributeListRuns != null && attributeListSize > 0 && attributeListSize < 16 * 1024 * 1024)
+        {
+            // Non-resident attribute list: read its clusters and trim to the data size.
+            long total = 0;
+            foreach (long[] run in attributeListRuns) total += run[1] * cluster;
+            byte[] raw = new byte[total];
+            long position = 0;
+            foreach (long[] run in attributeListRuns)
+            {
+                int length = (int)(run[1] * cluster);
+                if (run[2] == 0)
+                {
+                    byte[] part = new byte[length];
+                    source.ReadExact(run[0] * cluster, part, length);
+                    Buffer.BlockCopy(part, 0, raw, (int)position, length);
+                }
+                position += length;
+            }
+            attributeList = new byte[Math.Min(attributeListSize, total)];
+            Buffer.BlockCopy(raw, 0, attributeList, 0, attributeList.Length);
+        }
+        if (runs == null || mftSize <= 0) throw new InvalidDataException("无法定位 $MFT 数据");
+        if (attributeList != null) runs = AppendMftExtents(source, attributeList, runs, cluster, recordSize);
+        long recordCount = mftSize / recordSize;
+        if (recordCount > int.MaxValue) throw new InvalidDataException("MFT 过大");
+        TotalBytesToRead = mftSize;
+
+        Dictionary<long, int> dirIndex = new Dictionary<long, int>();
+        List<long> dirParentRefs = new List<long>();
+        List<KeyValuePair<long, DiskFileEntry>> pendingEmit = new List<KeyValuePair<long, DiskFileEntry>>();
+        Dictionary<long, RecordInfo> partial = new Dictionary<long, RecordInfo>();
+        Dictionary<long, RecordInfo> extensionParts = new Dictionary<long, RecordInfo>();
+
+        // Files reference their parent directory by record number; the directory may appear
+        // later in the table, so per-directory totals are kept by record number first.
+        Dictionary<long, long[]> direct = new Dictionary<long, long[]>();
+        Dictionary<long, byte> markers = new Dictionary<long, byte>();
+
+        DiskDirNode rootNode = new DiskDirNode();
+        rootNode.Index = 0;
+        rootNode.Name = rootDisplay;
+        rootNode.Children = new List<int>();
+        nodes.Add(rootNode);
+        dirIndex[5] = 0;
+        dirParentRefs.Add(5);
+
+        Phase = "读取 MFT";
+        int chunkBytes = (int)Math.Max(cluster, (4 * 1024 * 1024 / cluster) * cluster);
+        chunkBytes -= chunkBytes % recordSize;
+        if (chunkBytes <= 0) chunkBytes = recordSize;
+        byte[] buffer = new byte[chunkBytes];
+        long vcnBytes = 0;
+        long processedRecords = 0;
+        foreach (long[] run in runs)
+        {
+            long runBytes = run[1] * cluster;
+            long runStartByte = run[0] * cluster;
+            long offsetInRun = 0;
+            while (offsetInRun < runBytes && processedRecords < recordCount)
+            {
+                token.ThrowIfCancellationRequested();
+                int want = (int)Math.Min(chunkBytes, runBytes - offsetInRun);
+                long remainingRecordBytes = (recordCount - processedRecords) * recordSize;
+                if (want > remainingRecordBytes)
+                {
+                    want = (int)remainingRecordBytes;
+                    // Keep volume reads aligned to the sector size.
+                    int aligned = (int)(((want + bytesPerSector - 1) / bytesPerSector) * bytesPerSector);
+                    want = Math.Min(aligned, (int)Math.Min(chunkBytes, runBytes - offsetInRun));
+                }
+                if (run[2] == 0) source.ReadExact(runStartByte + offsetInRun, buffer, want);
+                else Array.Clear(buffer, 0, want);
+                BytesRead += want;
+                long firstRecord = (vcnBytes + offsetInRun) / recordSize;
+                int count = want / recordSize;
+                for (int i = 0; i < count && firstRecord + i < recordCount; i++)
+                {
+                    long recordNumber = firstRecord + i;
+                    ParseRecord(buffer, i * recordSize, recordSize, recordNumber, dirIndex, dirParentRefs,
+                        markers, partial, extensionParts, pendingEmit);
+                    processedRecords++;
+                }
+                offsetInRun += want;
+            }
+            vcnBytes += runBytes;
+        }
+
+        Phase = "整理目录结构";
+        // Complete records whose attributes continue in extension records.
+        foreach (KeyValuePair<long, RecordInfo> pair in partial)
+        {
+            RecordInfo extra;
+            if (extensionParts.TryGetValue(pair.Key, out extra)) pair.Value.Merge(extra);
+            EmitRecord(pair.Key, pair.Value, dirIndex, dirParentRefs, markers, pendingEmit);
+        }
+        foreach (KeyValuePair<long, DiskFileEntry> pair in pendingEmit)
+        {
+            DiskFileEntry e = pair.Value;
+            long[] agg;
+            if (!direct.TryGetValue(pair.Key, out agg)) { agg = new long[3]; direct[pair.Key] = agg; }
+            agg[0]++;
+            agg[1] += e.Alloc;
+            agg[2] += e.Logical;
+            AddFileToCollections(pair.Key, e);
+        }
+
+        // Link directories into a tree. Unknown or cyclic parents fall back to the root.
+        for (int i = 1; i < nodes.Count; i++)
+        {
+            long parentRecord = dirParentRefs[i];
+            int parent;
+            if (!dirIndex.TryGetValue(parentRecord, out parent) || parent == i) parent = 0;
+            nodes[i].Parent = parent;
+        }
+        BreakCycles();
+        for (int i = 1; i < nodes.Count; i++)
+        {
+            DiskDirNode parentNode = nodes[nodes[i].Parent];
+            if (parentNode.Children == null) parentNode.Children = new List<int>();
+            parentNode.Children.Add(i);
+        }
+        foreach (KeyValuePair<long, long[]> pair in direct)
+        {
+            int index;
+            if (!dirIndex.TryGetValue(pair.Key, out index)) index = 0;
+            nodes[index].DirectFiles += pair.Value[0];
+            nodes[index].DirectAlloc += pair.Value[1];
+            nodes[index].DirectLogical += pair.Value[2];
+        }
+        foreach (KeyValuePair<long, byte> pair in markers)
+        {
+            int index;
+            if (!dirIndex.TryGetValue(pair.Key, out index)) continue;
+            if ((pair.Value & 1) != 0) nodes[index].CacheTag = true;
+            if ((pair.Value & 2) != 0) nodes[index].VenvMarker = true;
+        }
+        // Parent records of retained file entries become node indexes.
+        foreach (DiskFileEntry e in large) ResolveParent(e, dirIndex);
+        foreach (DiskFileEntry e in heap) ResolveParent(e, dirIndex);
+        DiskAnalysisResult result = Finish(rootDisplay, "NTFS MFT 直读");
+        return result;
+    }
+
+    // A fragmented $MFT keeps later $DATA extents in extension records listed by its
+    // $ATTRIBUTE_LIST. Those records sit in the first extent, which is already mapped.
+    private static List<long[]> AppendMftExtents(VolumeSource source, byte[] list, List<long[]> firstRuns, long cluster, int recordSize)
+    {
+        SortedDictionary<long, List<long[]>> extents = new SortedDictionary<long, List<long[]>>();
+        extents[0] = firstRuns;
+        HashSet<long> visited = new HashSet<long>();
+        int p = 0;
+        while (p + 0x1A <= list.Length)
+        {
+            int type = BitConverter.ToInt32(list, p);
+            int entryLength = BitConverter.ToUInt16(list, p + 4);
+            if (entryLength < 0x1A || p + entryLength > list.Length) break;
+            int nameLength = list[p + 6];
+            long startVcn = BitConverter.ToInt64(list, p + 8);
+            long record = BitConverter.ToInt64(list, p + 0x10) & 0x0000FFFFFFFFFFFFL;
+            p += entryLength;
+            if (type != 0x80 || nameLength != 0 || startVcn == 0 || record == 0 || !visited.Add(record)) continue;
+            long byteOffset = record * recordSize;
+            long lcnByte = MapVcn(firstRuns, byteOffset, cluster);
+            if (lcnByte < 0) throw new InvalidDataException("$MFT 扩展记录不在首个区段内");
+            long alignedStart = lcnByte - (lcnByte % cluster);
+            long needed = (lcnByte - alignedStart) + recordSize;
+            byte[] data = new byte[(int)((needed + cluster - 1) / cluster * cluster)];
+            source.ReadExact(alignedStart, data, data.Length);
+            int offset = (int)(lcnByte - alignedStart);
+            byte[] rec = new byte[recordSize];
+            Buffer.BlockCopy(data, offset, rec, 0, recordSize);
+            if (!ApplyFixup(rec, 0, recordSize)) throw new InvalidDataException("$MFT 扩展记录校验失败");
+            ForEachAttribute(rec, 0, recordSize, delegate (int a, int t, int len)
+            {
+                if (t == 0x80 && rec[a + 8] != 0 && rec[a + 9] == 0)
+                {
+                    long vcn = BitConverter.ToInt64(rec, a + 0x10);
+                    if (vcn > 0 && !extents.ContainsKey(vcn)) extents[vcn] = DecodeRuns(rec, a + BitConverter.ToUInt16(rec, a + 0x20), a + len);
+                }
+            });
+        }
+        List<long[]> all = new List<long[]>();
+        long expectedVcn = 0;
+        foreach (KeyValuePair<long, List<long[]>> pair in extents)
+        {
+            if (pair.Key != expectedVcn) throw new InvalidDataException("$MFT 区段不连续");
+            foreach (long[] run in pair.Value) { all.Add(run); expectedVcn += run[1]; }
+        }
+        return all;
+    }
+
+    private static long MapVcn(List<long[]> runs, long byteOffset, long cluster)
+    {
+        long vcn = byteOffset / cluster;
+        long start = 0;
+        foreach (long[] run in runs)
+        {
+            if (vcn < start + run[1]) return run[2] != 0 ? -1 : (run[0] + (vcn - start)) * cluster + byteOffset % cluster;
+            start += run[1];
+        }
+        return -1;
+    }
+
+    private void ResolveParent(DiskFileEntry e, Dictionary<long, int> dirIndex)
+    {
+        if (e.Parent >= 0 && e.Path != null) return;
+        long parentRecord = e.Parent >= 0 ? e.Parent : -1;
+        int idx;
+        if (parentRecord < 0 || !dirIndex.TryGetValue(parentRecord, out idx)) idx = 0;
+        e.Parent = idx;
+        e.Path = "";
+    }
+
+    private void AddFileToCollections(long parentRecord, DiskFileEntry e)
+    {
+        // Parent holds the record number until the tree is linked (see ResolveParent).
+        AddFile(parentRecord > int.MaxValue ? -1 : (int)parentRecord, e.Name, e.Alloc, e.Logical, e.LastWriteUtc, heap, large, extensions);
+    }
+
+    private delegate void AttributeVisitor(int attributeOffset, int type, int length);
+
+    private static void ForEachAttribute(byte[] data, int offset, int recordSize, AttributeVisitor visit)
+    {
+        int a = offset + BitConverter.ToUInt16(data, offset + 0x14);
+        int end = offset + Math.Min(recordSize, (int)BitConverter.ToUInt32(data, offset + 0x18));
+        if (end <= offset || end > offset + recordSize) end = offset + recordSize;
+        while (a + 8 <= end)
+        {
+            int type = BitConverter.ToInt32(data, a);
+            if (type == -1) break;
+            int len = BitConverter.ToInt32(data, a + 4);
+            if (len < 0x18 || a + len > end) break;
+            visit(a, type, len);
+            a += len;
+        }
+    }
+
+    private static bool ApplyFixup(byte[] data, int offset, int recordSize)
+    {
+        if (data[offset] != (byte)'F' || data[offset + 1] != (byte)'I' || data[offset + 2] != (byte)'L' || data[offset + 3] != (byte)'E') return false;
+        int usaOffset = BitConverter.ToUInt16(data, offset + 4);
+        int usaCount = BitConverter.ToUInt16(data, offset + 6);
+        if (usaCount < 2 || usaOffset + usaCount * 2 > recordSize || (usaCount - 1) * 512 > recordSize) return false;
+        byte u0 = data[offset + usaOffset], u1 = data[offset + usaOffset + 1];
+        for (int i = 1; i < usaCount; i++)
+        {
+            int pos = offset + i * 512 - 2;
+            if (data[pos] != u0 || data[pos + 1] != u1) return false;
+            data[pos] = data[offset + usaOffset + i * 2];
+            data[pos + 1] = data[offset + usaOffset + i * 2 + 1];
+        }
+        return true;
+    }
+
+    private static List<long[]> DecodeRuns(byte[] data, int start, int end)
+    {
+        // Each element: { lcn, clusterCount, sparse(0/1) }.
+        List<long[]> runs = new List<long[]>();
+        int p = start;
+        long lcn = 0;
+        while (p < end)
+        {
+            byte header = data[p++];
+            if (header == 0) break;
+            int lenBytes = header & 0x0F;
+            int offBytes = header >> 4;
+            if (lenBytes == 0 || lenBytes > 8 || offBytes > 8 || p + lenBytes + offBytes > end) break;
+            long length = 0;
+            for (int i = 0; i < lenBytes; i++) length |= (long)data[p + i] << (8 * i);
+            p += lenBytes;
+            if (offBytes == 0)
+            {
+                runs.Add(new long[] { 0, length, 1 });
+                continue;
+            }
+            long delta = 0;
+            for (int i = 0; i < offBytes; i++) delta |= (long)data[p + i] << (8 * i);
+            if ((data[p + offBytes - 1] & 0x80) != 0 && offBytes < 8) delta |= -1L << (8 * offBytes);
+            p += offBytes;
+            lcn += delta;
+            runs.Add(new long[] { lcn, length, 0 });
+        }
+        return runs;
+    }
+
+    private void ParseRecord(byte[] data, int offset, int recordSize, long recordNumber,
+        Dictionary<long, int> dirIndex, List<long> dirParentRefs, Dictionary<long, byte> markers,
+        Dictionary<long, RecordInfo> partial, Dictionary<long, RecordInfo> extensionParts,
+        List<KeyValuePair<long, DiskFileEntry>> emit)
+    {
+        if (!ApplyFixup(data, offset, recordSize)) return;
+        // $BadClus:$Bad is a sparse stream as large as the volume; it holds no real data.
+        if (recordNumber == 8) return;
+        int flags = BitConverter.ToUInt16(data, offset + 0x16);
+        if ((flags & 1) == 0) return;
+        bool isDirectory = (flags & 2) != 0;
+        long baseRef = BitConverter.ToInt64(data, offset + 0x20) & 0x0000FFFFFFFFFFFFL;
+
+        string bestName = null;
+        int bestNamespace = -1;
+        long parentRef = -1;
+        long alloc = 0, logical = 0;
+        bool hasData = false;
+        bool hasList = false;
+        DateTime lastWrite = DateTime.MinValue;
+        int a = offset + BitConverter.ToUInt16(data, offset + 0x14);
+        int end = offset + recordSize;
+        int used = (int)BitConverter.ToUInt32(data, offset + 0x18);
+        if (used > 0 && used <= recordSize) end = offset + used;
+        while (a + 8 <= end)
+        {
+            int type = BitConverter.ToInt32(data, a);
+            if (type == -1) break;
+            int len = BitConverter.ToInt32(data, a + 4);
+            if (len < 0x18 || a + len > end) break;
+            bool nonResident = data[a + 8] != 0;
+            int nameLength = data[a + 9];
+            if (type == 0x10 && !nonResident)
+            {
+                int v = a + BitConverter.ToUInt16(data, a + 0x14);
+                if (v + 0x10 <= a + len)
+                {
+                    long ft = BitConverter.ToInt64(data, v + 0x08);
+                    try { lastWrite = DateTime.FromFileTimeUtc(ft); } catch (ArgumentOutOfRangeException) { }
+                }
+            }
+            else if (type == 0x20)
+            {
+                hasList = true;
+            }
+            else if (type == 0x30 && !nonResident)
+            {
+                int v = a + BitConverter.ToUInt16(data, a + 0x14);
+                if (v + 0x42 <= a + len)
+                {
+                    int nlen = data[v + 0x40];
+                    int ns = data[v + 0x41];
+                    if (v + 0x42 + nlen * 2 <= a + len && ns != 2)
+                    {
+                        // Prefer Win32 names (1, 3) over POSIX (0); DOS-only 8.3 aliases are ignored.
+                        int rank = ns == 0 ? 1 : 2;
+                        if (rank > bestNamespace)
+                        {
+                            bestNamespace = rank;
+                            bestName = Encoding.Unicode.GetString(data, v + 0x42, nlen * 2);
+                            parentRef = BitConverter.ToInt64(data, v) & 0x0000FFFFFFFFFFFFL;
+                        }
+                    }
+                }
+            }
+            else if (type == 0x80)
+            {
+                if (nonResident)
+                {
+                    long startVcn = BitConverter.ToInt64(data, a + 0x10);
+                    if (startVcn == 0)
+                    {
+                        int attrFlags = BitConverter.ToUInt16(data, a + 0x0C);
+                        long allocated = BitConverter.ToInt64(data, a + 0x28);
+                        if ((attrFlags & 0x8001) != 0 && len >= 0x48) allocated = BitConverter.ToInt64(data, a + 0x40);
+                        alloc += allocated;
+                        if (nameLength == 0) { logical = BitConverter.ToInt64(data, a + 0x30); hasData = true; }
+                    }
+                }
+                else
+                {
+                    if (nameLength == 0) { logical = BitConverter.ToUInt32(data, a + 0x10); hasData = true; }
+                }
+            }
+            a += len;
+        }
+
+        RecordInfo info = new RecordInfo();
+        info.Name = bestName;
+        info.NameRank = bestNamespace;
+        info.ParentRef = parentRef;
+        info.IsDirectory = isDirectory;
+        info.Alloc = alloc;
+        info.Logical = logical;
+        info.HasData = hasData;
+        info.LastWriteUtc = lastWrite;
+        if (baseRef != 0)
+        {
+            RecordInfo existing;
+            if (extensionParts.TryGetValue(baseRef, out existing)) existing.Merge(info);
+            else extensionParts[baseRef] = info;
+            return;
+        }
+        if (hasList) { partial[recordNumber] = info; return; }
+        EmitRecord(recordNumber, info, dirIndex, dirParentRefs, markers, emit);
+    }
+
+    private void EmitRecord(long recordNumber, RecordInfo info, Dictionary<long, int> dirIndex, List<long> dirParentRefs,
+        Dictionary<long, byte> markers, List<KeyValuePair<long, DiskFileEntry>> emit)
+    {
+        if (info.Name == null) return;
+        if (info.IsDirectory)
+        {
+            if (recordNumber == 5) return;
+            DiskDirNode node = new DiskDirNode();
+            node.Index = nodes.Count;
+            node.Name = info.Name;
+            nodes.Add(node);
+            dirIndex[recordNumber] = node.Index;
+            dirParentRefs.Add(info.ParentRef);
+            DirsScanned++;
+            return;
+        }
+        if (info.Name.Equals("CACHEDIR.TAG", StringComparison.OrdinalIgnoreCase) || info.Name.Equals("pyvenv.cfg", StringComparison.OrdinalIgnoreCase))
+        {
+            byte bit = (byte)(info.Name.Length == 12 ? 1 : 2);
+            byte existing;
+            markers.TryGetValue(info.ParentRef, out existing);
+            markers[info.ParentRef] = (byte)(existing | bit);
+        }
+        DiskFileEntry entry = new DiskFileEntry();
+        entry.Name = info.Name;
+        entry.Alloc = info.Alloc;
+        entry.Logical = info.Logical;
+        entry.LastWriteUtc = info.LastWriteUtc;
+        emit.Add(new KeyValuePair<long, DiskFileEntry>(info.ParentRef, entry));
+        FilesScanned++;
+        if ((emit.Count & 0xFFFF) == 0) CurrentPath = info.Name;
+    }
+
+    private void BreakCycles()
+    {
+        // Any node whose parent chain does not reach the root within the node count is re-parented.
+        int[] state = new int[nodes.Count];
+        state[0] = 2;
+        for (int i = 1; i < nodes.Count; i++)
+        {
+            if (state[i] == 2) continue;
+            List<int> path = new List<int>();
+            int current = i;
+            while (state[current] == 0)
+            {
+                state[current] = 1;
+                path.Add(current);
+                current = nodes[current].Parent;
+            }
+            if (state[current] == 1)
+            {
+                // Cycle detected; attach the node where the loop closed to the root.
+                nodes[current].Parent = 0;
+            }
+            foreach (int n in path) state[n] = 2;
+        }
+    }
+
+    // ---- Enumeration engine ----
+
+    private DiskAnalysisResult AnalyzeEnumeration(string root)
+    {
+        Reset();
+        Phase = "多线程枚举目录";
+        DiskDirNode rootNode = new DiskDirNode();
+        rootNode.Index = 0;
+        rootNode.Name = root;
+        rootNode.Children = new List<int>();
+        nodes.Add(rootNode);
+        System.Collections.Concurrent.ConcurrentStack<KeyValuePair<int, string>> work = new System.Collections.Concurrent.ConcurrentStack<KeyValuePair<int, string>>();
+        work.Push(new KeyValuePair<int, string>(0, root.TrimEnd('\\')));
+        long pendingCount = 1;
+        int threadCount = Math.Max(4, Math.Min(16, Environment.ProcessorCount * 2));
+        Thread[] threads = new Thread[threadCount];
+        List<DiskFileEntry>[] heaps = new List<DiskFileEntry>[threadCount];
+        List<DiskFileEntry>[] larges = new List<DiskFileEntry>[threadCount];
+        Dictionary<string, DiskExtStat>[] exts = new Dictionary<string, DiskExtStat>[threadCount];
+        Exception failure = null;
+        for (int t = 0; t < threadCount; t++)
+        {
+            int slot = t;
+            heaps[slot] = new List<DiskFileEntry>();
+            larges[slot] = new List<DiskFileEntry>();
+            exts[slot] = new Dictionary<string, DiskExtStat>(StringComparer.OrdinalIgnoreCase);
+            threads[slot] = new Thread(delegate ()
+            {
+                try
+                {
+                    while (Interlocked.Read(ref pendingCount) > 0)
+                    {
+                        if (token.IsCancellationRequested) return;
+                        KeyValuePair<int, string> item;
+                        if (!work.TryPop(out item)) { Thread.Sleep(1); continue; }
+                        try { EnumerateDirectory(item.Key, item.Value, work, ref pendingCount, heaps[slot], larges[slot], exts[slot]); }
+                        catch (Exception) { Interlocked.Increment(ref errors); }
+                        finally { Interlocked.Decrement(ref pendingCount); }
+                    }
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            threads[slot].IsBackground = true;
+            threads[slot].Start();
+        }
+        foreach (Thread thread in threads) thread.Join();
+        token.ThrowIfCancellationRequested();
+        if (failure != null) throw failure;
+        for (int t = 0; t < threadCount; t++)
+        {
+            foreach (DiskFileEntry e in heaps[t])
+            {
+                if (heap.Count < TopFileCount) HeapPush(heap, e);
+                else if (e.Alloc > heap[0].Alloc) HeapReplaceTop(heap, e);
+            }
+            large.AddRange(larges[t]);
+            MergeExt(extensions, exts[t]);
+        }
+        foreach (DiskFileEntry e in heap) e.Path = "";
+        foreach (DiskFileEntry e in large) e.Path = "";
+        return Finish(root, "多线程目录枚举");
+    }
+
+    private void EnumerateDirectory(int nodeIndex, string path, System.Collections.Concurrent.ConcurrentStack<KeyValuePair<int, string>> work,
+        ref long pendingCount, List<DiskFileEntry> localHeap, List<DiskFileEntry> localLarge, Dictionary<string, DiskExtStat> localExt)
+    {
+        DiskDirNode node;
+        lock (sync) { node = nodes[nodeIndex]; }
+        string search = (path.StartsWith("\\\\") ? path : "\\\\?\\" + path) + "\\*";
+        NativeMethods.WIN32_FIND_DATAW data;
+        using (SafeFindHandle handle = NativeMethods.FindFirstFileExW(search, 1, out data, 0, IntPtr.Zero, 2))
+        {
+            if (handle.IsInvalid)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error != 2 && error != 18) Interlocked.Increment(ref errors);
+                return;
+            }
+            long files = 0;
+            do
+            {
+                string name = data.cFileName;
+                if (name == "." || name == "..") continue;
+                FileAttributes attributes = (FileAttributes)data.dwFileAttributes;
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    if ((attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    DiskDirNode child = new DiskDirNode();
+                    child.Name = name;
+                    child.Parent = nodeIndex;
+                    lock (sync)
+                    {
+                        child.Index = nodes.Count;
+                        nodes.Add(child);
+                    }
+                    if (node.Children == null) node.Children = new List<int>();
+                    node.Children.Add(child.Index);
+                    Interlocked.Increment(ref pendingCount);
+                    work.Push(new KeyValuePair<int, string>(child.Index, path + "\\" + name));
+                    Interlocked.Increment(ref DirsScanned);
+                    continue;
+                }
+                long logical = ((long)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+                long alloc;
+                // Cloud placeholders and offline files do not occupy local clusters.
+                if (((uint)attributes & (0x00400000u | 0x00001000u)) != 0) alloc = 0;
+                else alloc = (logical + clusterSize - 1) / clusterSize * clusterSize;
+                DateTime lastWrite = DateTime.MinValue;
+                try { lastWrite = DateTime.FromFileTimeUtc(((long)data.ftLastWriteTimeHigh << 32) | data.ftLastWriteTimeLow); } catch (ArgumentOutOfRangeException) { }
+                node.DirectFiles++;
+                node.DirectAlloc += alloc;
+                node.DirectLogical += logical;
+                MarkSpecialFile(node, name);
+                AddFile(nodeIndex, name, alloc, logical, lastWrite, localHeap, localLarge, localExt);
+                files++;
+            }
+            while (NativeMethods.FindNextFileW(handle, out data));
+            Interlocked.Add(ref FilesScanned, files);
+        }
+        CurrentPath = path;
+    }
+
+    // ---- post-processing ----
+
+    private DiskAnalysisResult Finish(string root, string mode)
+    {
+        token.ThrowIfCancellationRequested();
+        Phase = "汇总与生成建议";
+        DiskAnalysisResult result = new DiskAnalysisResult();
+        result.Root = root.EndsWith("\\") ? root : root + "\\";
+        result.Mode = mode;
+        result.Nodes = nodes;
+        nodes[0].Name = result.Root;
+
+        // Post-order totals without recursion.
+        int count = nodes.Count;
+        int[] order = new int[count];
+        int orderCount = 0;
+        Stack<int> stack = new Stack<int>();
+        stack.Push(0);
+        bool[] visited = new bool[count];
+        while (stack.Count > 0)
+        {
+            int n = stack.Pop();
+            if (visited[n]) continue;
+            visited[n] = true;
+            order[orderCount++] = n;
+            List<int> children = nodes[n].Children;
+            if (children != null) foreach (int c in children) if (!visited[c]) stack.Push(c);
+        }
+        long[] denseChildFiles = new long[count];
+        bool[] dense = new bool[count];
+        for (int i = orderCount - 1; i >= 0; i--)
+        {
+            DiskDirNode n = nodes[order[i]];
+            n.Alloc += n.DirectAlloc;
+            n.Logical += n.DirectLogical;
+            n.Files += n.DirectFiles;
+            bool qualifies = n.Files >= MinDenseFiles && Math.Max(n.Alloc, n.Logical) / Math.Max(1, n.Files) <= MaxDenseAverage;
+            // Report the most specific directory: skip ancestors whose small files mostly sit in reported children.
+            if (qualifies && denseChildFiles[n.Index] * 2 < n.Files) dense[n.Index] = true;
+            if (n.Parent >= 0 && n.Index != 0)
+            {
+                DiskDirNode p = nodes[n.Parent];
+                p.Alloc += n.Alloc;
+                p.Logical += n.Logical;
+                p.Files += n.Files;
+                p.Dirs += n.Dirs + 1;
+                if (qualifies) denseChildFiles[p.Index] += n.Files;
+            }
+        }
+        result.TotalFiles = nodes[0].Files;
+        result.TotalDirs = nodes[0].Dirs;
+        result.TotalAlloc = nodes[0].Alloc;
+        result.TotalLogical = nodes[0].Logical;
+        result.Errors = errors;
+
+        for (int i = 0; i < count; i++)
+        {
+            if (!dense[i] || !visited[i]) continue;
+            DiskDenseDir d = new DiskDenseDir();
+            d.Node = i;
+            d.Files = nodes[i].Files;
+            d.Alloc = nodes[i].Alloc;
+            d.Logical = nodes[i].Logical;
+            d.AverageBytes = Math.Max(nodes[i].Alloc, nodes[i].Logical) / Math.Max(1, nodes[i].Files);
+            result.DenseDirs.Add(d);
+        }
+        result.DenseDirs.Sort(delegate (DiskDenseDir x, DiskDenseDir y) { return y.Files.CompareTo(x.Files); });
+        if (result.DenseDirs.Count > 300) result.DenseDirs.RemoveRange(300, result.DenseDirs.Count - 300);
+        foreach (DiskDenseDir d in result.DenseDirs) d.Path = result.GetPath(d.Node);
+
+        heap.Sort(delegate (DiskFileEntry x, DiskFileEntry y) { int c = y.Alloc.CompareTo(x.Alloc); return c != 0 ? c : y.Logical.CompareTo(x.Logical); });
+        result.TopFiles = heap;
+        large.Sort(delegate (DiskFileEntry x, DiskFileEntry y) { return y.Alloc.CompareTo(x.Alloc); });
+        result.LargeFiles = large;
+        foreach (DiskFileEntry e in heap) e.Path = BuildFilePath(result, e);
+        foreach (DiskFileEntry e in large) if (String.IsNullOrEmpty(e.Path)) e.Path = BuildFilePath(result, e);
+
+        List<DiskExtStat> ext = new List<DiskExtStat>(extensions.Values);
+        ext.Sort(delegate (DiskExtStat x, DiskExtStat y) { return y.Alloc.CompareTo(x.Alloc); });
+        result.Extensions = ext;
+        DiskSuggestionRules.Build(result);
+        Phase = "完成";
+        return result;
+    }
+
+    private static string BuildFilePath(DiskAnalysisResult result, DiskFileEntry e)
+    {
+        int parent = e.Parent >= 0 && e.Parent < result.Nodes.Count ? e.Parent : 0;
+        string dir = result.GetPath(parent);
+        return dir.TrimEnd('\\') + "\\" + e.Name;
+    }
+}
+
+public static class DiskSuggestionRules
+{
+    private sealed class KnownPath
+    {
+        public string Path;
+        public string Category;
+        public string Risk;
+        public string Advice;
+        public long MinBytes;
+        public bool CanRecycle;
+        public string CatalogId;
+    }
+
+    private static string Env(Environment.SpecialFolder folder)
+    {
+        try { return Environment.GetFolderPath(folder); } catch (Exception) { return ""; }
+    }
+
+    private static List<KnownPath> KnownPaths(string root)
+    {
+        string windows = Env(Environment.SpecialFolder.Windows);
+        if (String.IsNullOrEmpty(windows)) windows = System.IO.Path.Combine(root, "Windows");
+        string local = Env(Environment.SpecialFolder.LocalApplicationData);
+        string programData = Env(Environment.SpecialFolder.CommonApplicationData);
+        string profile = Env(Environment.SpecialFolder.UserProfile);
+        string temp = System.IO.Path.GetTempPath();
+        List<KnownPath> list = new List<KnownPath>();
+        Action<string, string, string, string, long, bool, string> add = delegate (string p, string c, string r, string a, long min, bool recycle, string catalog)
+        {
+            if (String.IsNullOrEmpty(p)) return;
+            KnownPath k = new KnownPath();
+            k.Path = p.TrimEnd('\\'); k.Category = c; k.Risk = r; k.Advice = a; k.MinBytes = min; k.CanRecycle = recycle; k.CatalogId = catalog;
+            list.Add(k);
+        };
+        const long MB = 1024L * 1024;
+        add(System.IO.Path.Combine(windows, "SoftwareDistribution\\Download"), "Windows 更新下载缓存", "低", "在“设置 → 系统 → 存储 → 临时文件”中勾选“Windows 更新清理”；不要在更新安装过程中手动删除。", 200 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(windows, "SoftwareDistribution\\DeliveryOptimization"), "传递优化文件", "低", "在“存储 → 临时文件”中勾选“传递优化文件”。", 200 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(root, "Windows.old"), "以前的 Windows 安装", "中", "确认新系统工作正常且不需要回退后，在“存储 → 临时文件”中勾选“以前的 Windows 安装”。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(root, "$WINDOWS.~BT"), "Windows 升级临时文件", "中", "升级完成后，在“存储 → 临时文件”中勾选“临时 Windows 安装文件”。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(root, "$WINDOWS.~WS"), "Windows 升级临时文件", "中", "升级完成后，在“存储 → 临时文件”中勾选“临时 Windows 安装文件”。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(root, "ESD"), "Windows 升级安装镜像", "中", "升级完成后可用“存储 → 临时文件”或磁盘清理删除。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(windows, "WinSxS"), "组件存储 WinSxS", "中", "不要手动删除。可以管理员运行 DISM /Online /Cleanup-Image /StartComponentCleanup 回收被替换的组件；显示大小包含大量硬链接，实际占用更小。", 5L * 1024 * MB, false, null);
+        add(System.IO.Path.Combine(windows, "Installer"), "Windows Installer 缓存", "高", "卸载和修复程序需要这些文件，不要手动删除。请通过“已安装应用”卸载不用的软件。", 1024 * MB, false, "manage-installed-apps");
+        add(System.IO.Path.Combine(windows, "System32\\DriverStore\\FileRepository"), "驱动仓库", "高", "不要手动删除。可管理员运行 pnputil /enum-drivers 查看，并用 pnputil /delete-driver 删除确认不用的旧版驱动。", 3L * 1024 * MB, false, null);
+        add(System.IO.Path.Combine(windows, "Logs\\CBS"), "组件服务日志", "中", "可在“存储 → 临时文件”中清理；排查更新问题时请保留。", 300 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(windows, "Temp"), "Windows 系统临时文件", "中", "可在“清理项目”中勾选“Windows 系统临时文件”（需管理员）。", 100 * MB, false, "windows-temp");
+        add(System.IO.Path.Combine(windows, "Minidump"), "系统崩溃转储", "中", "可在“清理项目”中勾选“系统与内核转储”（需管理员）。", 50 * MB, false, "system-dumps");
+        add(System.IO.Path.Combine(windows, "LiveKernelReports"), "内核实时报告", "中", "可在“清理项目”中勾选“系统与内核转储”（需管理员）。", 50 * MB, false, "system-dumps");
+        add(System.IO.Path.Combine(windows, "MEMORY.DMP"), "完整内存转储", "中", "不排查蓝屏时可在“存储 → 临时文件”中删除“系统错误内存转储文件”。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(programData, "Microsoft\\Windows\\WER"), "Windows 错误报告", "低", "可在“存储 → 临时文件”中勾选“Windows 错误报告和反馈诊断”。", 100 * MB, false, "manage-windows-storage");
+        add(System.IO.Path.Combine(programData, "Package Cache"), "安装包缓存", "高", "Visual Studio 等程序修复和卸载依赖这些文件，不建议删除；通过“已安装应用”卸载不用的软件。", 1024 * MB, false, "manage-installed-apps");
+        add(System.IO.Path.Combine(root, "hiberfil.sys"), "休眠文件", "高", "不使用休眠和快速启动时，可在“清理项目”中选择“关闭休眠并删除 hiberfil.sys”。", 1024 * MB, false, "hibernate-file");
+        add(System.IO.Path.Combine(root, "pagefile.sys"), "虚拟内存分页文件", "高", "不要删除。内存充足时可在“系统 → 高级系统设置 → 性能 → 虚拟内存”调小或改到其他盘。", 4L * 1024 * MB, false, null);
+        add(System.IO.Path.Combine(root, "swapfile.sys"), "应用交换文件", "高", "由系统管理，不要删除。", 1024 * MB, false, null);
+        add(System.IO.Path.Combine(root, "$Recycle.Bin"), "回收站", "中", "确认回收站中的文件都不需要后清空；当前用户的回收站可在“清理项目”中清空。", 100 * MB, false, "recycle-bin");
+        if (!String.IsNullOrEmpty(temp)) add(temp, "用户临时文件", "中", "可在“清理项目”中勾选“用户临时文件”，或开启定时清理 7 天前的临时文件。", 200 * MB, false, "user-temp");
+        if (!String.IsNullOrEmpty(local))
+        {
+            add(System.IO.Path.Combine(local, "CrashDumps"), "应用崩溃转储", "中", "可在“清理项目”中勾选“用户崩溃转储”。", 50 * MB, false, "crash-dumps");
+            add(System.IO.Path.Combine(local, "Docker\\wsl"), "Docker Desktop 虚拟磁盘", "高", "在 Docker Desktop 中清理镜像和卷（docker system prune），不要直接删除 vhdx。", 1024 * MB, false, null);
+            add(System.IO.Path.Combine(local, "Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState"), "终端状态", "低", "通常较小；异常增大时检查终端设置导出的缓冲区。", 500 * MB, false, null);
+        }
+        if (!String.IsNullOrEmpty(profile))
+        {
+            add(System.IO.Path.Combine(profile, ".cache"), "用户工具缓存目录", "中", "包含模型、浏览器驱动等下载缓存；在“清理项目”中查看“模型与工具缓存”，或逐个确认后删除子目录。", 1024 * MB, false, "tool-model-caches");
+            add(System.IO.Path.Combine(profile, ".gradle\\caches"), "Gradle 缓存", "中", "可在“清理项目”中勾选“Gradle 缓存”。", 500 * MB, false, "gradle-cache");
+            add(System.IO.Path.Combine(profile, ".m2\\repository"), "Maven 本地仓库", "中", "可在“清理项目”中勾选“Maven 本地仓库”。", 500 * MB, false, "maven-repository");
+            add(System.IO.Path.Combine(profile, ".nuget\\packages"), "NuGet 全局包目录", "中", "可运行 dotnet nuget locals global-packages --clear；之后还原依赖时重新下载。", 1024 * MB, false, null);
+            add(System.IO.Path.Combine(profile, ".cargo\\registry"), "Cargo 注册表缓存", "中", "可在“清理项目”中勾选 Cargo 相关缓存。", 500 * MB, false, "cargo-download-cache");
+            add(System.IO.Path.Combine(profile, "scoop\\cache"), "Scoop 安装包缓存", "低", "运行 scoop cache rm * 清理。", 200 * MB, false, null);
+            add(System.IO.Path.Combine(profile, "go\\pkg\\mod"), "Go 模块缓存", "中", "运行 go clean -modcache 清理，之后构建会重新下载。", 1024 * MB, false, null);
+            add(System.IO.Path.Combine(profile, ".conda\\pkgs"), "Conda 包缓存", "低", "运行 conda clean --all 清理。", 500 * MB, false, null);
+            add(System.IO.Path.Combine(profile, "anaconda3\\pkgs"), "Conda 包缓存", "低", "运行 conda clean --all 清理。", 500 * MB, false, null);
+            add(System.IO.Path.Combine(profile, "miniconda3\\pkgs"), "Conda 包缓存", "低", "运行 conda clean --all 清理。", 500 * MB, false, null);
+        }
+        return list;
+    }
+
+    public static bool IsProtectedPath(string path)
+    {
+        if (String.IsNullOrEmpty(path)) return true;
+        string full;
+        try { full = System.IO.Path.GetFullPath(path).TrimEnd('\\'); } catch (Exception) { return true; }
+        string root = System.IO.Path.GetPathRoot(full).TrimEnd('\\');
+        if (full.Length <= root.Length) return true;
+        string[] protectedRoots = new string[]
+        {
+            Env(Environment.SpecialFolder.Windows),
+            Env(Environment.SpecialFolder.ProgramFiles),
+            Env(Environment.SpecialFolder.ProgramFilesX86),
+            System.IO.Path.Combine(Env(Environment.SpecialFolder.CommonApplicationData), "Microsoft"),
+            System.IO.Path.Combine(root + "\\", "$Recycle.Bin"),
+            System.IO.Path.Combine(root + "\\", "System Volume Information"),
+            System.IO.Path.Combine(root + "\\", "Recovery"),
+            System.IO.Path.Combine(root + "\\", "Boot"),
+        };
+        foreach (string p in protectedRoots)
+        {
+            if (String.IsNullOrEmpty(p)) continue;
+            string pr = p.TrimEnd('\\');
+            if (full.Equals(pr, StringComparison.OrdinalIgnoreCase) || full.StartsWith(pr + "\\", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        string parent = System.IO.Path.GetDirectoryName(full);
+        if (parent != null && parent.TrimEnd('\\').Equals(root, StringComparison.OrdinalIgnoreCase))
+        {
+            string leaf = System.IO.Path.GetFileName(full);
+            // Top-level folders such as Users, Program Files and system files are never recycled as a whole.
+            if (leaf.StartsWith("$") || leaf.EndsWith(".sys", StringComparison.OrdinalIgnoreCase) ||
+                leaf.Equals("Users", StringComparison.OrdinalIgnoreCase) || leaf.Equals("ProgramData", StringComparison.OrdinalIgnoreCase) ||
+                leaf.Equals("bootmgr", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        string profile = Env(Environment.SpecialFolder.UserProfile);
+        if (!String.IsNullOrEmpty(profile))
+        {
+            string pf = profile.TrimEnd('\\');
+            if (full.Equals(pf, StringComparison.OrdinalIgnoreCase)) return true;
+            string usersRoot = System.IO.Path.GetDirectoryName(pf);
+            if (usersRoot != null && System.IO.Path.GetDirectoryName(full) != null &&
+                System.IO.Path.GetDirectoryName(full).TrimEnd('\\').Equals(usersRoot.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return true;
+            foreach (string leaf in new string[] { "AppData", "AppData\\Local", "AppData\\Roaming", "AppData\\LocalLow", "Documents", "Desktop", "Downloads", "Pictures", "Videos", "Music", "OneDrive" })
+            {
+                if (full.Equals(System.IO.Path.Combine(pf, leaf), StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool Under(string path, string root)
+    {
+        if (String.IsNullOrEmpty(root)) return false;
+        string r = root.TrimEnd('\\');
+        return path.StartsWith(r + "\\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void Build(DiskAnalysisResult result)
+    {
+        const long MB = 1024L * 1024;
+        List<DiskSuggestion> list = new List<DiskSuggestion>();
+        HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string root = result.Root;
+
+        foreach (KnownPath known in KnownPaths(root))
+        {
+            long bytes = -1;
+            bool isDir = true;
+            int node = result.FindDirectory(known.Path);
+            if (node >= 0) bytes = result.Nodes[node].Alloc;
+            else
+            {
+                foreach (DiskFileEntry f in result.LargeFiles)
+                {
+                    if (f.Path != null && f.Path.Equals(known.Path, StringComparison.OrdinalIgnoreCase)) { bytes = Math.Max(f.Alloc, f.Logical); isDir = false; break; }
+                }
+            }
+            if (bytes < known.MinBytes || !seen.Add(known.Path)) continue;
+            DiskSuggestion s = new DiskSuggestion();
+            s.Path = known.Path; s.IsDirectory = isDir; s.Category = known.Category; s.Risk = known.Risk;
+            s.Bytes = bytes; s.Advice = known.Advice; s.CanRecycle = known.CanRecycle; s.CatalogId = known.CatalogId;
+            list.Add(s);
+        }
+
+        // Directory patterns: dependency folders and build caches.
+        for (int i = 1; i < result.Nodes.Count; i++)
+        {
+            DiskDirNode n = result.Nodes[i];
+            if (n.Alloc < 100 * MB) continue;
+            string category = null, advice = null, risk = "中";
+            if (n.Name.Equals("node_modules", StringComparison.OrdinalIgnoreCase))
+            {
+                // Only the outermost node_modules of a project.
+                bool nested = false;
+                int p = n.Parent;
+                int guard = 0;
+                while (p > 0 && guard++ < 512)
+                {
+                    if (result.Nodes[p].Name.Equals("node_modules", StringComparison.OrdinalIgnoreCase)) { nested = true; break; }
+                    p = result.Nodes[p].Parent;
+                }
+                if (nested) continue;
+                category = "Node.js 依赖目录";
+                advice = "不再活跃的项目可删除 node_modules，需要时在项目目录运行 npm install / pnpm install 重建。";
+            }
+            else if (n.CacheTag)
+            {
+                category = "构建缓存目录（CACHEDIR.TAG）";
+                advice = "目录声明自己是可重建的缓存（例如 Rust target、Cargo/pip 缓存）；删除后重新构建会变慢。";
+                risk = "低";
+            }
+            else if (n.VenvMarker && n.Alloc >= 300 * MB)
+            {
+                category = "Python 虚拟环境";
+                advice = "不再使用的项目可删除虚拟环境，需要时按 requirements / pyproject 重新创建。";
+            }
+            if (category == null) continue;
+            string path = result.GetPath(i);
+            if (!seen.Add(path)) continue;
+            DiskSuggestion s = new DiskSuggestion();
+            s.Path = path; s.IsDirectory = true; s.Category = category; s.Risk = risk; s.Bytes = n.Alloc; s.Advice = advice;
+            s.CanRecycle = !IsProtectedPath(path);
+            list.Add(s);
+        }
+
+        string profile = Env(Environment.SpecialFolder.UserProfile);
+        string downloads = String.IsNullOrEmpty(profile) ? "" : System.IO.Path.Combine(profile, "Downloads");
+        string desktop = Env(Environment.SpecialFolder.DesktopDirectory);
+        string documents = Env(Environment.SpecialFolder.MyDocuments);
+        string windows = Env(Environment.SpecialFolder.Windows);
+        DateTime now = DateTime.UtcNow;
+        foreach (DiskFileEntry f in result.LargeFiles)
+        {
+            if (f.Path == null || seen.Contains(f.Path)) continue;
+            string ext = f.Extension;
+            long size = Math.Max(f.Alloc, f.Logical);
+            double ageDays = f.LastWriteUtc == DateTime.MinValue ? 0 : (now - f.LastWriteUtc).TotalDays;
+            bool inWindows = Under(f.Path, windows);
+            string category = null, advice = null, risk = "中";
+            bool recyclable = true;
+            if (ext == "dmp" && size >= 16 * MB)
+            {
+                category = "崩溃转储文件";
+                advice = "不再排查对应程序崩溃时可删除。";
+            }
+            else if ((ext == "log" || ext == "etl" || ext == "trace") && size >= 100 * MB && !inWindows)
+            {
+                category = "超大日志文件";
+                advice = "确认对应程序已关闭且无需排查问题后可删除；若持续增长，请调整该程序的日志设置。";
+            }
+            else if ((ext == "iso" || ext == "msi" || ext == "exe" || ext == "zip" || ext == "7z" || ext == "rar" || ext == "msix" || ext == "appx" || ext == "img") &&
+                size >= 100 * MB && ageDays >= 30 && (Under(f.Path, downloads) || Under(f.Path, desktop) || Under(f.Path, documents)))
+            {
+                category = "旧安装包或压缩包";
+                advice = "下载超过 30 天的安装镜像或压缩包；确认已安装或已解压后可删除，或移到其他盘保存。";
+            }
+            else if ((ext == "tmp" || ext == "bak" || ext == "old" || ext == "temp") && size >= 50 * MB && !inWindows)
+            {
+                category = "临时或备份文件";
+                advice = "通常由程序中断或升级留下；确认对应程序没有在使用后可删除。";
+            }
+            else if ((ext == "vhdx" || ext == "vhd" || ext == "vmdk" || ext == "qcow2") && size >= 1024 * MB)
+            {
+                category = "虚拟磁盘文件";
+                advice = "属于 WSL、Docker 或虚拟机，不要直接删除。可在对应程序内清理，或用 wsl --manage <发行版> --set-sparse true / Optimize-VHD 压缩。";
+                risk = "高";
+                recyclable = false;
+            }
+            else if (size >= 1024 * MB && ageDays >= 180 && Under(f.Path, profile) && !inWindows)
+            {
+                category = "长期未修改的大文件";
+                advice = "超过 180 天未修改；确认不再需要后删除，或移到其他盘或网盘。";
+            }
+            if (category == null) continue;
+            seen.Add(f.Path);
+            DiskSuggestion s = new DiskSuggestion();
+            s.Path = f.Path; s.IsDirectory = false; s.Category = category; s.Risk = risk; s.Bytes = size; s.Advice = advice;
+            s.CanRecycle = recyclable && !IsProtectedPath(f.Path);
+            list.Add(s);
+        }
+        list.Sort(delegate (DiskSuggestion x, DiskSuggestion y) { return y.Bytes.CompareTo(x.Bytes); });
+        if (list.Count > 500) list.RemoveRange(500, list.Count - 500);
+        result.Suggestions = list;
+    }
+}
+
+public abstract class VolumeSource : IDisposable
+{
+    public abstract int ReadAt(long offset, byte[] buffer, int count);
+    public void ReadExact(long offset, byte[] buffer, int count)
+    {
+        int done = 0;
+        byte[] scratch = null;
+        while (done < count)
+        {
+            int read;
+            if (done == 0) read = ReadAt(offset, buffer, count);
+            else
+            {
+                if (scratch == null) scratch = new byte[count];
+                read = ReadAt(offset + done, scratch, count - done);
+                if (read > 0) Buffer.BlockCopy(scratch, 0, buffer, done, read);
+            }
+            if (read <= 0) throw new EndOfStreamException("分区读取提前结束");
+            done += read;
+        }
+    }
+    public abstract void Dispose();
+}
+
+public sealed class StreamVolumeSource : VolumeSource
+{
+    private readonly Stream stream;
+    public StreamVolumeSource(Stream stream) { this.stream = stream; }
+    public override int ReadAt(long offset, byte[] buffer, int count)
+    {
+        stream.Position = offset;
+        return stream.Read(buffer, 0, count);
+    }
+    public override void Dispose() { stream.Dispose(); }
+}
+
+public sealed class WindowsVolumeSource : VolumeSource
+{
+    private readonly SafeFileHandle handle;
+    private WindowsVolumeSource(SafeFileHandle handle) { this.handle = handle; }
+
+    public static WindowsVolumeSource Open(string drive)
+    {
+        string device = "\\\\.\\" + drive.TrimEnd('\\');
+        // Commit dirty metadata first so the table reflects recent changes; failure is harmless.
+        using (SafeFileHandle flush = NativeMethods.CreateFileW(device, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero))
+        {
+            if (!flush.IsInvalid) NativeMethods.FlushFileBuffers(flush);
+        }
+        SafeFileHandle h = NativeMethods.CreateFileW(device, 0x80000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (h.IsInvalid)
+        {
+            int error = Marshal.GetLastWin32Error();
+            h.Dispose();
+            throw new Win32Exception(error, error == 5 ? "需要管理员权限才能直接读取 MFT" : "无法打开分区 " + device);
+        }
+        return new WindowsVolumeSource(h);
+    }
+
+    public override int ReadAt(long offset, byte[] buffer, int count)
+    {
+        long newPosition;
+        if (!NativeMethods.SetFilePointerEx(handle, offset, out newPosition, 0)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        int read;
+        if (!NativeMethods.ReadFile(handle, buffer, count, out read, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        return read;
+    }
+
+    public override void Dispose() { handle.Dispose(); }
+}
+
+public sealed class SafeFindHandle : SafeHandleZeroOrMinusOneIsInvalid
+{
+    public SafeFindHandle() : base(true) { }
+    protected override bool ReleaseHandle() { return NativeMethods.FindClose(handle); }
+}
+
+internal static class NativeMethods
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WIN32_FIND_DATAW
+    {
+        public uint dwFileAttributes;
+        public uint ftCreationTimeLow;
+        public uint ftCreationTimeHigh;
+        public uint ftLastAccessTimeLow;
+        public uint ftLastAccessTimeHigh;
+        public uint ftLastWriteTimeLow;
+        public uint ftLastWriteTimeHigh;
+        public uint nFileSizeHigh;
+        public uint nFileSizeLow;
+        public uint dwReserved0;
+        public uint dwReserved1;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string cFileName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string cAlternateFileName;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern SafeFindHandle FindFirstFileExW(string fileName, int infoLevel, out WIN32_FIND_DATAW data, int searchOp, IntPtr filter, int flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FindNextFileW(SafeFindHandle handle, out WIN32_FIND_DATAW data);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FindClose(IntPtr handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern SafeFileHandle CreateFileW(string fileName, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ReadFile(SafeFileHandle handle, byte[] buffer, int count, out int read, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetFilePointerEx(SafeFileHandle handle, long distance, out long newPosition, uint method);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool FlushFileBuffers(SafeFileHandle handle);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetDiskFreeSpaceW(string root, out uint sectorsPerCluster, out uint bytesPerSector, out uint freeClusters, out uint totalClusters);
+}
+'@ -ErrorAction Stop
+    }
+    catch { if ($null -eq ('DiskAnalyzer' -as [type])) { throw } }
+}
+
+function Invoke-DiskAnalysis {
+    param([string]$Root = 'C:\', [bool]$PreferMft = $true)
+    Initialize-DiskAnalyzer
+    $analyzer = New-Object DiskAnalyzer
+    $cancellation = New-Object Threading.CancellationTokenSource
+    try { return $analyzer.Analyze($Root, $PreferMft, $cancellation.Token) }
+    finally { $cancellation.Dispose() }
+}
+
+function Get-CatalogSuggestions {
+    param([object[]]$Items, [Int64]$MinBytes = 50MB)
+    # Scanned cleanup items are the safest suggestions: explicit directories with their own guards.
+    foreach ($item in @($Items)) {
+        if ($item.Action -eq 'Manage' -or $item.IdentityBlocked -or [Int64]$item.EstimatedBytes -lt $MinBytes) { continue }
+        $first = @($item.PathSpecs | Where-Object { $null -ne $_ } | Select-Object -First 1)
+        $suggestion = New-Object DiskSuggestion
+        $suggestion.Path = if ($first.Count -gt 0) { [string]$first[0].Path } else { '' }
+        $suggestion.IsDirectory = $true
+        $suggestion.Category = '清理项目：' + $item.Name
+        $suggestion.Risk = $item.Risk
+        $suggestion.Bytes = [Int64]$item.EstimatedBytes
+        $suggestion.Advice = '在“清理项目”页勾选此项，由程序按保留期、类型和运行状态保护执行。' + $item.Description
+        $suggestion.CanRecycle = $false
+        $suggestion.CatalogId = $item.Id
+        $suggestion
+    }
+}
+
+function Write-AnalysisReport {
+    param([Parameter(Mandatory = $true)]$Result, [int]$Top = 15)
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add(('分析完成：{0}，模式 {1}，{2:N0} 个文件，{3:N0} 个文件夹，占用 {4}，用时 {5:N1} 秒，无法读取 {6} 项' -f $Result.Root, $Result.Mode, $Result.TotalFiles, $Result.TotalDirs, (Format-ByteSize $Result.TotalAlloc), $Result.Seconds, $Result.Errors))
+    if (-not [string]::IsNullOrWhiteSpace($Result.FallbackReason)) { $lines.Add('未使用 MFT 直读：' + $Result.FallbackReason) }
+    $lines.Add('')
+    $lines.Add('[最大的文件夹]')
+    foreach ($child in @($Result.GetChildren(0) | Select-Object -First $Top)) {
+        $node = $Result.Nodes[$child]
+        $lines.Add(('{0,12}  {1,10:N0} 个文件  {2}' -f (Format-ByteSize $node.Alloc), $node.Files, $Result.GetPath($child)))
+    }
+    $lines.Add('')
+    $lines.Add('[最大的文件]')
+    foreach ($file in @($Result.TopFiles | Select-Object -First $Top)) {
+        $lines.Add(('{0,12}  {1}' -f (Format-ByteSize ([Math]::Max($file.Alloc, $file.Logical))), $file.Path))
+    }
+    $lines.Add('')
+    $lines.Add('[大量小文件的文件夹]')
+    foreach ($dense in @($Result.DenseDirs | Select-Object -First $Top)) {
+        $lines.Add(('{0,10:N0} 个文件  平均 {1,9}  {2}' -f $dense.Files, (Format-ByteSize $dense.AverageBytes), $dense.Path))
+    }
+    $lines.Add('')
+    $lines.Add('[删除建议]')
+    foreach ($suggestion in @($Result.Suggestions | Select-Object -First $Top)) {
+        $lines.Add(('{0,12}  [{1}] {2}  {3}' -f (Format-ByteSize $suggestion.Bytes), $suggestion.Risk, $suggestion.Category, $suggestion.Path))
+    }
+    return $lines
+}
+
+function Test-RecyclablePath {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    Initialize-DiskAnalyzer
+    if ([DiskSuggestionRules]::IsProtectedPath($Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try { Assert-NoReparsePointInPathChain -Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))) } catch { return $false }
+    return $true
+}
+
+function Move-PathToRecycleBin {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-RecyclablePath -Path $Path)) { throw "此路径受保护或已不存在，未执行：$Path" }
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    $ui = [Microsoft.VisualBasic.FileIO.UIOption]::AllDialogs
+    $recycle = [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    $cancel = [Microsoft.VisualBasic.FileIO.UICancelOption]::DoNothing
+    if (Test-Path -LiteralPath $Path -PathType Container) { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($Path, $ui, $recycle, $cancel) }
+    else { [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($Path, $ui, $recycle, $cancel) }
+    return -not (Test-Path -LiteralPath $Path)
+}
+
+# ---- Daily scheduled cleanup (only items marked ScheduleSafe; never admin, never manual) ----
+
+function Get-ScheduleDirectory {
+    return (Join-Path $env:LOCALAPPDATA 'CDriveCleaner')
+}
+
+function Get-ScheduleConfigPath {
+    if (-not [string]::IsNullOrWhiteSpace($script:ScheduleConfigOverride)) { return $script:ScheduleConfigOverride }
+    return (Join-Path (Get-ScheduleDirectory) 'schedule.json')
+}
+
+function Get-ScheduleConfig {
+    $default = [pscustomobject]@{ Enabled = $false; Time = '12:30'; LogKeepDays = 7; ItemIds = @() }
+    $path = Get-ScheduleConfigPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $default }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $time = [string]$raw.Time
+        if ($time -notmatch '^([01]\d|2[0-3]):[0-5]\d$') { $time = $default.Time }
+        $keep = if ([int]$raw.LogKeepDays -in @(7, 30)) { [int]$raw.LogKeepDays } else { 7 }
+        return [pscustomobject]@{ Enabled = [bool]$raw.Enabled; Time = $time; LogKeepDays = $keep; ItemIds = @($raw.ItemIds | ForEach-Object { [string]$_ } | Where-Object { $_ -match '^[a-z0-9-]+$' }) }
+    }
+    catch { return $default }
+}
+
+function Save-ScheduleConfig {
+    param([Parameter(Mandatory = $true)]$Config)
+    $path = Get-ScheduleConfigPath
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($path))
+    $json = [pscustomobject]@{ Enabled = [bool]$Config.Enabled; Time = [string]$Config.Time; LogKeepDays = [int]$Config.LogKeepDays; ItemIds = @($Config.ItemIds) } | ConvertTo-Json
+    [IO.File]::WriteAllText($path, $json, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Test-ScheduleSafeItem {
+    param($Item)
+    # Defence in depth: the flag alone is not enough; automatic runs must also be unattended-safe.
+    return ((Get-ItemOption $Item 'ScheduleSafe' $false) -eq $true) -and $Item.Action -eq 'Paths' -and (-not $Item.RequiresAdmin) -and $Item.Risk -eq '低' -and (-not (Get-ItemOption $Item 'IdentityBlocked' $false))
+}
+
+function Get-ScheduleEligibleItems {
+    param([object[]]$Items)
+    return @($Items | Where-Object { Test-ScheduleSafeItem $_ })
+}
+
+function Write-ScheduleLog {
+    param([string]$Path, [string]$Message)
+    $line = '[{0}] {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
+    [IO.File]::AppendAllText($Path, $line + [Environment]::NewLine, (New-Object Text.UTF8Encoding($false)))
+}
+
+function Invoke-ScheduledCleanup {
+    param(
+        [Parameter(Mandatory = $true)]$Config,
+        [Parameter(Mandatory = $true)][object[]]$Items,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+    [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($LogPath))
+    $script:LogKeepDays = if ([int]$Config.LogKeepDays -in @(7, 30)) { [int]$Config.LogKeepDays } else { 7 }
+    $script:PolicyReferenceUtc = [datetime]::UtcNow
+    $wanted = @{}
+    foreach ($id in @($Config.ItemIds)) { $wanted[[string]$id] = $true }
+    $summary = [pscustomobject]@{ Ran = 0; Skipped = 0; Failed = 0; Released = [Int64]0; Deleted = 0 }
+    $before = (Get-CDriveInfo).Free
+    Write-ScheduleLog $LogPath ('开始定时清理：{0} 个已选项目，日志保留 {1} 天。' -f $wanted.Count, $script:LogKeepDays)
+    foreach ($item in @($Items)) {
+        if (-not $wanted.ContainsKey($item.Id)) { continue }
+        if (-not (Test-ScheduleSafeItem $item)) {
+            $summary.Skipped++
+            Write-ScheduleLog $LogPath ('跳过：{0} 不在无风险定时清理范围内。' -f $item.Name)
+            continue
+        }
+        if (Test-ItemProcessesRunning -Item $item) {
+            $summary.Skipped++
+            Write-ScheduleLog $LogPath ('跳过：{0} 的相关程序正在运行。' -f $item.Name)
+            continue
+        }
+        try {
+            $result = Invoke-CleanupAction -Item $item
+            $summary.Ran++
+            Write-ScheduleLog $LogPath ('完成：{0}；失败 {1}，跳过链接或共享文件 {2}。{3}' -f $item.Name, $result.Failed, $result.Skipped, $result.Detail)
+        }
+        catch {
+            $summary.Failed++
+            Write-ScheduleLog $LogPath ('失败：{0} — {1}' -f $item.Name, $_.Exception.Message)
+        }
+    }
+    $summary.Released = [Math]::Max([Int64]0, (Get-CDriveInfo).Free - $before)
+    Write-ScheduleLog $LogPath ('结束：执行 {0} 项，跳过 {1} 项，失败 {2} 项，可用空间增加 {3}。' -f $summary.Ran, $summary.Skipped, $summary.Failed, (Format-ByteSize $summary.Released))
+    return $summary
+}
+
+function Remove-OldScheduleLogs {
+    param([string]$Directory, [int]$KeepDays = 30)
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) { return }
+    $cutoff = (Get-Date).AddDays(-$KeepDays)
+    # Only this tool's own daily log files are pruned.
+    foreach ($file in @(Get-ChildItem -LiteralPath $Directory -File -Filter 'scheduled-*.log' -ErrorAction SilentlyContinue)) {
+        if ($file.Name -match '^scheduled-\d{8}\.log$' -and $file.LastWriteTime -lt $cutoff) { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+
+
+
+function Get-InstalledScriptPath {
+    return (Join-Path (Get-ScheduleDirectory) 'CDriveCleaner.ps1')
+}
+
+function Register-DailyCleanupTask {
+    param([Parameter(Mandatory = $true)]$Config)
+    if ($Config.Time -notmatch '^([01]\d|2[0-3]):[0-5]\d$') { throw '时间格式无效。' }
+    $directory = Get-ScheduleDirectory
+    [void][IO.Directory]::CreateDirectory($directory)
+    # The task runs a stable copy, so moving or deleting the downloaded folder does not break it.
+    $installed = Get-InstalledScriptPath
+    if (-not [IO.Path]::GetFullPath($script:ScriptPath).Equals([IO.Path]::GetFullPath($installed), [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $script:ScriptPath -Destination $installed -Force
+    }
+    Save-ScheduleConfig -Config $Config
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -ScheduledClean' -f $installed
+    $action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $directory
+    $at = [datetime]::ParseExact($Config.Time, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+    $trigger = New-ScheduledTaskTrigger -Daily -At $at
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+    $description = 'C 盘清理助手：每日清理已选的无风险项目（旧运行日志、7 天前临时文件等）。在清理助手的“定时清理”页修改或停用。'
+    [void](Register-ScheduledTask -TaskPath '\CDriveCleaner\' -TaskName 'DailySafeCleanup' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description $description -Force)
+}
+
+function Unregister-DailyCleanupTask {
+    $task = Get-ScheduledTask -TaskPath '\CDriveCleaner\' -TaskName 'DailySafeCleanup' -ErrorAction SilentlyContinue
+    if ($null -ne $task) { Unregister-ScheduledTask -TaskPath '\CDriveCleaner\' -TaskName 'DailySafeCleanup' -Confirm:$false }
+    $config = Get-ScheduleConfig
+    $config.Enabled = $false
+    Save-ScheduleConfig -Config $config
+}
+
+function Get-DailyCleanupTaskState {
+    try {
+        $task = Get-ScheduledTask -TaskPath '\CDriveCleaner\' -TaskName 'DailySafeCleanup' -ErrorAction Stop
+        $info = Get-ScheduledTaskInfo -InputObject $task -ErrorAction SilentlyContinue
+        $last = if ($null -ne $info -and $info.LastRunTime -gt [datetime]'2000-01-01') { $info.LastRunTime.ToString('yyyy-MM-dd HH:mm') } else { '尚未运行' }
+        $next = if ($null -ne $info -and $null -ne $info.NextRunTime -and $info.NextRunTime -gt [datetime]'2000-01-01') { $info.NextRunTime.ToString('yyyy-MM-dd HH:mm') } else { '—' }
+        return ('已启用（{0}）；上次运行：{1}；下次运行：{2}' -f $task.State, $last, $next)
+    }
+    catch { return '未启用' }
+}
+
+
 function Invoke-BackgroundWork {
     param([hashtable]$Request)
     $state = $script:WorkerState
@@ -1190,6 +2947,31 @@ if ($script:ElevationIdentityMismatch) {
     }
 }
 
+if ($ScheduledClean) {
+    $mutex = New-Object Threading.Mutex($false, 'Local\CDriveCleanerScheduledClean')
+    $owned = $false
+    try {
+        try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }
+        if (-not $owned) { exit 0 }
+        $logDirectory = Join-Path (Get-ScheduleDirectory) 'logs'
+        $logPath = Join-Path $logDirectory ('scheduled-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
+        Remove-OldScheduleLogs -Directory $logDirectory
+        $summary = Invoke-ScheduledCleanup -Config (Get-ScheduleConfig) -Items $script:Items -LogPath $logPath
+        Write-Output ('定时清理结束：执行 {0}，跳过 {1}，失败 {2}，释放 {3}。' -f $summary.Ran, $summary.Skipped, $summary.Failed, (Format-ByteSize $summary.Released))
+    }
+    finally {
+        if ($owned) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+    exit 0
+}
+
+if ($AnalyzeOnly) {
+    $analysis = Invoke-DiskAnalysis -Root $AnalyzeRoot -PreferMft $true
+    Write-AnalysisReport -Result $analysis
+    exit 0
+}
+
 if ($SelfTest) {
     $testBase = Join-Path $env:TEMP ('CDriveCleanerSelfTest_' + [Guid]::NewGuid().ToString('N'))
     $allowedRoot = Join-Path $testBase 'allowed'
@@ -1272,9 +3054,9 @@ Add-Type -AssemblyName System.Drawing
 [Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'C 盘清理助手 · 扩展版'
+$form.Text = 'C 盘清理助手 v' + $script:AppVersion
 $form.StartPosition = 'CenterScreen'
-$form.Size = New-Object Drawing.Size(1180, 780)
+$form.Size = New-Object Drawing.Size(1200, 820)
 $form.MinimumSize = New-Object Drawing.Size(1120, 650)
 $form.Font = New-Object Drawing.Font('Microsoft YaHei UI', 9)
 $form.BackColor = [Drawing.Color]::White
@@ -1282,11 +3064,9 @@ $form.BackColor = [Drawing.Color]::White
 $layout = New-Object Windows.Forms.TableLayoutPanel
 $layout.Dock = 'Fill'
 $layout.ColumnCount = 1
-$layout.RowCount = 5
+$layout.RowCount = 3
 [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 92)))
-[void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 86)))
 [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
-[void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 148)))
 [void]$layout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 28)))
 $form.Controls.Add($layout)
 
@@ -1294,6 +3074,27 @@ $header = New-Object Windows.Forms.Panel
 $header.Dock = 'Fill'
 $header.BackColor = [Drawing.Color]::FromArgb(245, 248, 252)
 $layout.Controls.Add($header, 0, 0)
+
+$mainTabs = New-Object Windows.Forms.TabControl
+$mainTabs.Dock = 'Fill'
+$mainTabs.Padding = New-Object Drawing.Point(14, 5)
+$layout.Controls.Add($mainTabs, 0, 1)
+$cleanTab = New-Object Windows.Forms.TabPage
+$cleanTab.Text = '清理项目'
+$analysisTab = New-Object Windows.Forms.TabPage
+$analysisTab.Text = '空间分析'
+$scheduleTab = New-Object Windows.Forms.TabPage
+$scheduleTab.Text = '定时清理'
+$mainTabs.TabPages.AddRange(@($cleanTab, $analysisTab, $scheduleTab))
+
+$cleanLayout = New-Object Windows.Forms.TableLayoutPanel
+$cleanLayout.Dock = 'Fill'
+$cleanLayout.ColumnCount = 1
+$cleanLayout.RowCount = 3
+[void]$cleanLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 86)))
+[void]$cleanLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$cleanLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 148)))
+$cleanTab.Controls.Add($cleanLayout)
 
 $title = New-Object Windows.Forms.Label
 $title.Text = 'C 盘清理助手'
@@ -1345,7 +3146,7 @@ $toolbar.FlowDirection = 'LeftToRight'
 $toolbar.Padding = New-Object Windows.Forms.Padding(12, 8, 8, 5)
 $toolbar.WrapContents = $true
 $toolbar.BackColor = [Drawing.Color]::White
-$layout.Controls.Add($toolbar, 0, 1)
+$cleanLayout.Controls.Add($toolbar, 0, 0)
 
 function New-ToolbarButton {
     param([string]$Text, [int]$Width = 112)
@@ -1419,7 +3220,7 @@ $grid.ColumnHeadersDefaultCellStyle.Font = New-Object Drawing.Font('Microsoft Ya
 $grid.ColumnHeadersHeight = 32
 $grid.DefaultCellStyle.SelectionBackColor = [Drawing.Color]::FromArgb(218, 234, 250)
 $grid.DefaultCellStyle.SelectionForeColor = [Drawing.Color]::Black
-$layout.Controls.Add($grid, 0, 2)
+$cleanLayout.Controls.Add($grid, 0, 1)
 
 $selectColumn = New-Object Windows.Forms.DataGridViewCheckBoxColumn
 $selectColumn.Name = 'Selected'
@@ -1485,7 +3286,7 @@ $logGroup = New-Object Windows.Forms.GroupBox
 $logGroup.Text = '扫描与清理日志'
 $logGroup.Dock = 'Fill'
 $logGroup.Padding = New-Object Windows.Forms.Padding(9)
-$layout.Controls.Add($logGroup, 0, 3)
+$cleanLayout.Controls.Add($logGroup, 0, 2)
 
 $logBox = New-Object Windows.Forms.TextBox
 $logBox.Dock = 'Fill'
@@ -1510,7 +3311,7 @@ $progress.Minimum = 0
 $progress.Maximum = [Math]::Max(1, $script:Items.Count)
 [void]$statusStrip.Items.Add($statusLabel)
 [void]$statusStrip.Items.Add($progress)
-$layout.Controls.Add($statusStrip, 0, 4)
+$layout.Controls.Add($statusStrip, 0, 2)
 
 $presetIds = @{}
 if (-not [string]::IsNullOrWhiteSpace($PresetSelection)) {
@@ -1942,8 +3743,545 @@ $retentionBox.Add_SelectedIndexChanged({
     Invoke-CatalogScan -ApplyDefaults $false
 })
 
+
+# ---- 空间分析页：类似 WizTree 的整盘结构、最大文件、小文件密集目录与删除建议 ----
+
+$script:Analyzer = $null
+$script:AnalysisResult = $null
+$script:AnalysisFocus = 'List'
+
+$analysisLayout = New-Object Windows.Forms.TableLayoutPanel
+$analysisLayout.Dock = 'Fill'
+$analysisLayout.ColumnCount = 1
+$analysisLayout.RowCount = 2
+[void]$analysisLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 46)))
+[void]$analysisLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
+$analysisTab.Controls.Add($analysisLayout)
+
+$analysisBar = New-Object Windows.Forms.FlowLayoutPanel
+$analysisBar.Dock = 'Fill'
+$analysisBar.Padding = New-Object Windows.Forms.Padding(8, 6, 8, 2)
+$analysisBar.WrapContents = $false
+$analysisLayout.Controls.Add($analysisBar, 0, 0)
+
+$analysisRootLabel = New-Object Windows.Forms.Label
+$analysisRootLabel.Text = '分析位置：'
+$analysisRootLabel.AutoSize = $true
+$analysisRootLabel.Margin = New-Object Windows.Forms.Padding(0, 9, 0, 0)
+$analysisRootBox = New-Object Windows.Forms.TextBox
+$analysisRootBox.Text = 'C:\'
+$analysisRootBox.Width = 230
+$analysisRootBox.Margin = New-Object Windows.Forms.Padding(2, 6, 4, 0)
+$analysisBrowseButton = New-ToolbarButton -Text '选择文件夹…' -Width 105
+$analysisStartButton = New-ToolbarButton -Text '开始分析' -Width 100
+$analysisStopButton = New-ToolbarButton -Text '停止' -Width 70
+$analysisStopButton.Enabled = $false
+$analysisInfo = New-Object Windows.Forms.Label
+$analysisInfo.AutoSize = $true
+$analysisInfo.Margin = New-Object Windows.Forms.Padding(12, 9, 0, 0)
+$analysisInfo.Text = if ($script:IsAdministrator) { '管理员模式：分析整个分区时直接读取 NTFS 主文件表（MFT），速度最快。' } else { '普通模式：使用多线程目录枚举；以管理员身份重启后可直接读取 MFT，速度更快。' }
+$analysisBar.Controls.AddRange(@($analysisRootLabel, $analysisRootBox, $analysisBrowseButton, $analysisStartButton, $analysisStopButton, $analysisInfo))
+
+$analysisSplit = New-Object Windows.Forms.SplitContainer
+$analysisSplit.Dock = 'Fill'
+$analysisSplit.Orientation = 'Vertical'
+$analysisSplit.SplitterDistance = 440
+$analysisLayout.Controls.Add($analysisSplit, 0, 1)
+
+$dirTree = New-Object Windows.Forms.TreeView
+$dirTree.Dock = 'Fill'
+$dirTree.HideSelection = $false
+$dirTree.ShowNodeToolTips = $true
+$dirTree.Font = New-Object Drawing.Font('Microsoft YaHei UI', 9)
+$analysisSplit.Panel1.Controls.Add($dirTree)
+
+$analysisRight = New-Object Windows.Forms.TableLayoutPanel
+$analysisRight.Dock = 'Fill'
+$analysisRight.ColumnCount = 1
+$analysisRight.RowCount = 3
+[void]$analysisRight.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$analysisRight.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 54)))
+[void]$analysisRight.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 42)))
+$analysisSplit.Panel2.Controls.Add($analysisRight)
+
+$analysisTabs = New-Object Windows.Forms.TabControl
+$analysisTabs.Dock = 'Fill'
+$analysisRight.Controls.Add($analysisTabs, 0, 0)
+
+$analysisAdvice = New-Object Windows.Forms.Label
+$analysisAdvice.Dock = 'Fill'
+$analysisAdvice.Padding = New-Object Windows.Forms.Padding(4, 4, 4, 0)
+$analysisAdvice.AutoEllipsis = $true
+$analysisAdvice.Text = '分析只读取文件信息，不修改任何文件。选中一行可查看建议；删除操作只会移到回收站，并在执行前再次确认。'
+$analysisRight.Controls.Add($analysisAdvice, 0, 1)
+
+$analysisActions = New-Object Windows.Forms.FlowLayoutPanel
+$analysisActions.Dock = 'Fill'
+$analysisRight.Controls.Add($analysisActions, 0, 2)
+$openLocationButton = New-ToolbarButton -Text '打开所在位置' -Width 118
+$copyPathButton = New-ToolbarButton -Text '复制路径' -Width 90
+$recycleButton = New-ToolbarButton -Text '移到回收站…' -Width 110
+$gotoItemButton = New-ToolbarButton -Text '转到清理项目' -Width 118
+$exportButton = New-ToolbarButton -Text '导出报告…' -Width 100
+$analysisActions.Controls.AddRange(@($openLocationButton, $copyPathButton, $recycleButton, $gotoItemButton, $exportButton))
+
+function New-AnalysisList {
+    param([string]$Title, [object[]]$Columns, [string]$Kind)
+    $page = New-Object Windows.Forms.TabPage
+    $page.Text = $Title
+    $list = New-Object Windows.Forms.ListView
+    $list.Dock = 'Fill'
+    $list.View = 'Details'
+    $list.FullRowSelect = $true
+    $list.HideSelection = $false
+    $list.MultiSelect = $false
+    $list.GridLines = $true
+    foreach ($column in $Columns) {
+        $header = $list.Columns.Add([string]$column[0], [int]$column[1])
+        if ($column.Count -gt 2 -and $column[2] -eq 'Right') { $header.TextAlign = 'Right' }
+    }
+    $list.Tag = @{ Kind = $Kind; Data = @(); Keys = @($Columns | ForEach-Object { $_[3] }); SortColumn = -1; Descending = $true }
+    $page.Controls.Add($list)
+    [void]$analysisTabs.TabPages.Add($page)
+    return $list
+}
+
+$suggestionList = New-AnalysisList -Title '删除建议' -Kind 'Suggestion' -Columns @(
+    @('大小', 90, 'Right', { $_.Bytes }), @('风险', 50, 'Left', { $_.Risk }), @('类别', 190, 'Left', { $_.Category }), @('路径', 420, 'Left', { $_.Path }))
+$largeFileList = New-AnalysisList -Title '最大文件' -Kind 'File' -Columns @(
+    @('大小', 90, 'Right', { $_.Logical }), @('占用', 90, 'Right', { $_.Alloc }), @('修改时间', 130, 'Left', { $_.LastWriteUtc }), @('路径', 460, 'Left', { $_.Path }))
+$denseList = New-AnalysisList -Title '大量小文件' -Kind 'Dense' -Columns @(
+    @('文件数', 90, 'Right', { $_.Files }), @('占用', 90, 'Right', { $_.Alloc }), @('平均大小', 90, 'Right', { $_.AverageBytes }), @('路径', 480, 'Left', { $_.Path }))
+$extensionList = New-AnalysisList -Title '文件类型' -Kind 'Extension' -Columns @(
+    @('扩展名', 110, 'Left', { $_.Extension }), @('文件数', 100, 'Right', { $_.Count }), @('占用', 110, 'Right', { $_.Alloc }), @('大小', 110, 'Right', { $_.Logical }))
+$script:AnalysisLists = @($suggestionList, $largeFileList, $denseList, $extensionList)
+
+function Get-AnalysisRowTexts {
+    param([string]$Kind, $Data)
+    switch ($Kind) {
+        'Suggestion' { return @((Format-ByteSize $Data.Bytes), $Data.Risk, $Data.Category, $Data.Path) }
+        'File' {
+            $time = if ($Data.LastWriteUtc -gt [datetime]'1980-01-01') { $Data.LastWriteUtc.ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { '' }
+            return @((Format-ByteSize $Data.Logical), (Format-ByteSize $Data.Alloc), $time, $Data.Path)
+        }
+        'Dense' { return @(('{0:N0}' -f $Data.Files), (Format-ByteSize $Data.Alloc), (Format-ByteSize $Data.AverageBytes), $Data.Path) }
+        'Extension' {
+            $name = if ([string]::IsNullOrEmpty($Data.Extension)) { '（无扩展名）' } else { '.' + $Data.Extension }
+            return @($name, ('{0:N0}' -f $Data.Count), (Format-ByteSize $Data.Alloc), (Format-ByteSize $Data.Logical))
+        }
+    }
+}
+
+function Set-AnalysisListData {
+    param([Windows.Forms.ListView]$List, [object[]]$Data)
+    $state = $List.Tag
+    $state.Data = @($Data)
+    $List.BeginUpdate()
+    try {
+        $List.Items.Clear()
+        $rows = New-Object System.Collections.Generic.List[Windows.Forms.ListViewItem]
+        foreach ($entry in $state.Data) {
+            $texts = @(Get-AnalysisRowTexts -Kind $state.Kind -Data $entry)
+            $row = New-Object Windows.Forms.ListViewItem([string]$texts[0])
+            for ($i = 1; $i -lt $texts.Count; $i++) { [void]$row.SubItems.Add([string]$texts[$i]) }
+            $row.Tag = $entry
+            if ($state.Kind -eq 'Suggestion') {
+                if ($entry.Risk -eq '高') { $row.ForeColor = [Drawing.Color]::Firebrick }
+                elseif ($entry.Risk -eq '低') { $row.ForeColor = [Drawing.Color]::FromArgb(20, 125, 65) }
+            }
+            $rows.Add($row)
+        }
+        $List.Items.AddRange($rows.ToArray())
+    }
+    finally { $List.EndUpdate() }
+}
+
+foreach ($analysisList in $script:AnalysisLists) {
+    $analysisList.Add_ColumnClick({
+        param($sender, $eventArgs)
+        $state = $sender.Tag
+        if ($state.SortColumn -eq $eventArgs.Column) { $state.Descending = -not $state.Descending }
+        else { $state.SortColumn = $eventArgs.Column; $state.Descending = $true }
+        $key = $state.Keys[$eventArgs.Column]
+        $sorted = @($state.Data | Sort-Object -Property @{ Expression = $key; Descending = $state.Descending })
+        Set-AnalysisListData -List $sender -Data $sorted
+    })
+    $analysisList.Add_SelectedIndexChanged({ $script:AnalysisFocus = 'List'; Update-AnalysisSelection })
+    $analysisList.Add_DoubleClick({ $script:AnalysisFocus = 'List'; Open-AnalysisLocation })
+}
+
+function Get-SelectedAnalysisEntry {
+    $page = $analysisTabs.SelectedTab
+    if ($null -ne $page -and $page.Controls.Count -gt 0) {
+        $list = $page.Controls[0]
+        if ($list.SelectedItems.Count -gt 0) {
+            $entry = $list.SelectedItems[0].Tag
+            if ($list.Tag.Kind -eq 'Extension') { return $null }
+            return [pscustomobject]@{ Path = [string]$entry.Path; Entry = $entry; Kind = $list.Tag.Kind; Row = $list.SelectedItems[0] }
+        }
+    }
+    return $null
+}
+
+function Get-SelectedTreeEntry {
+    $node = $dirTree.SelectedNode
+    if ($null -eq $node -or $null -eq $script:AnalysisResult -or $node.Tag -isnot [int]) { return $null }
+    return [pscustomobject]@{ Path = $script:AnalysisResult.GetPath([int]$node.Tag); Entry = $null; Kind = 'Tree'; Row = $null; Node = $node }
+}
+
+function Update-AnalysisSelection {
+    $selected = Get-SelectedAnalysisEntry
+    $gotoItemButton.Enabled = $false
+    if ($null -eq $selected) { return }
+    if ($selected.Kind -eq 'Suggestion') {
+        $analysisAdvice.Text = '建议：' + $selected.Entry.Advice
+        $gotoItemButton.Enabled = -not [string]::IsNullOrEmpty($selected.Entry.CatalogId) -and $script:RowsById.ContainsKey($selected.Entry.CatalogId)
+        $recycleButton.Enabled = $selected.Entry.CanRecycle
+    }
+    else {
+        $analysisAdvice.Text = $selected.Path
+        $recycleButton.Enabled = $true
+    }
+}
+
+function Get-ActiveAnalysisEntry {
+    if ($script:AnalysisFocus -eq 'Tree') { return (Get-SelectedTreeEntry) }
+    $entry = Get-SelectedAnalysisEntry
+    if ($null -ne $entry) { return $entry }
+    return (Get-SelectedTreeEntry)
+}
+
+function Open-AnalysisLocation {
+    $entry = Get-ActiveAnalysisEntry
+    if ($null -eq $entry -or [string]::IsNullOrWhiteSpace($entry.Path)) { return }
+    $explorer = Join-Path $env:SystemRoot 'explorer.exe'
+    if (Test-Path -LiteralPath $entry.Path -PathType Container) { Start-Process -FilePath $explorer -ArgumentList ('"{0}"' -f $entry.Path) | Out-Null }
+    elseif (Test-Path -LiteralPath $entry.Path) { Start-Process -FilePath $explorer -ArgumentList ('/select,"{0}"' -f $entry.Path) | Out-Null }
+    else { [void][Windows.Forms.MessageBox]::Show('此路径已不存在。', '空间分析', 'OK', 'Information') }
+}
+
+function Format-TreeNodeText {
+    param($Result, [int]$Index, [Int64]$ParentBytes)
+    $node = $Result.Nodes[$Index]
+    $percent = if ($ParentBytes -gt 0) { 100.0 * $node.Alloc / $ParentBytes } else { 100.0 }
+    $name = if ($Index -eq 0) { $Result.Root } else { $node.Name }
+    return ('{0}    {1}  ({2:N1}%)  · {3:N0} 个文件' -f $name, (Format-ByteSize $node.Alloc), $percent, $node.Files)
+}
+
+function New-DirectoryTreeNode {
+    param($Result, [int]$Index, [Int64]$ParentBytes)
+    $treeNode = New-Object Windows.Forms.TreeNode(Format-TreeNodeText -Result $Result -Index $Index -ParentBytes $ParentBytes)
+    $treeNode.Tag = $Index
+    $treeNode.ToolTipText = $Result.GetPath($Index)
+    $node = $Result.Nodes[$Index]
+    if (($null -ne $node.Children -and $node.Children.Count -gt 0) -or $node.DirectFiles -gt 0) {
+        $placeholder = New-Object Windows.Forms.TreeNode('…')
+        $placeholder.Tag = 'placeholder'
+        [void]$treeNode.Nodes.Add($placeholder)
+    }
+    if ($ParentBytes -gt 0 -and $node.Alloc * 5 -ge $ParentBytes) { $treeNode.ForeColor = [Drawing.Color]::FromArgb(170, 60, 20) }
+    return $treeNode
+}
+
+function Expand-DirectoryTreeNode {
+    param([Windows.Forms.TreeNode]$TreeNode)
+    $result = $script:AnalysisResult
+    if ($null -eq $result -or $TreeNode.Tag -isnot [int]) { return }
+    if ($TreeNode.Nodes.Count -ne 1 -or [string]$TreeNode.Nodes[0].Tag -ne 'placeholder') { return }
+    $index = [int]$TreeNode.Tag
+    $node = $result.Nodes[$index]
+    $children = @($result.GetChildren($index))
+    $dirTree.BeginUpdate()
+    try {
+        $TreeNode.Nodes.Clear()
+        $shown = [Math]::Min($children.Count, 300)
+        for ($i = 0; $i -lt $shown; $i++) { [void]$TreeNode.Nodes.Add((New-DirectoryTreeNode -Result $result -Index $children[$i] -ParentBytes $node.Alloc)) }
+        if ($children.Count -gt $shown) {
+            [Int64]$rest = 0
+            for ($i = $shown; $i -lt $children.Count; $i++) { $rest += $result.Nodes[$children[$i]].Alloc }
+            $more = New-Object Windows.Forms.TreeNode(('… 其余 {0:N0} 个文件夹，共 {1}' -f ($children.Count - $shown), (Format-ByteSize $rest)))
+            $more.ForeColor = [Drawing.Color]::DimGray
+            [void]$TreeNode.Nodes.Add($more)
+        }
+        if ($node.DirectFiles -gt 0) {
+            $files = New-Object Windows.Forms.TreeNode(('〈此文件夹中的文件〉    {0}  · {1:N0} 个文件' -f (Format-ByteSize $node.DirectAlloc), $node.DirectFiles))
+            $files.ForeColor = [Drawing.Color]::DimGray
+            [void]$TreeNode.Nodes.Add($files)
+        }
+    }
+    finally { $dirTree.EndUpdate() }
+}
+
+$dirTree.Add_BeforeExpand({ param($sender, $eventArgs) Expand-DirectoryTreeNode -TreeNode $eventArgs.Node })
+$dirTree.Add_AfterSelect({
+    $script:AnalysisFocus = 'Tree'
+    $entry = Get-SelectedTreeEntry
+    if ($null -ne $entry) { $analysisAdvice.Text = $entry.Path; $recycleButton.Enabled = Test-RecyclablePath -Path $entry.Path }
+})
+$dirTree.Add_NodeMouseDoubleClick({ $script:AnalysisFocus = 'Tree'; Open-AnalysisLocation })
+
+function Show-AnalysisResult {
+    param($Result)
+    $script:AnalysisResult = $Result
+    $dirTree.BeginUpdate()
+    try {
+        $dirTree.Nodes.Clear()
+        $rootNode = New-DirectoryTreeNode -Result $Result -Index 0 -ParentBytes 0
+        [void]$dirTree.Nodes.Add($rootNode)
+        Expand-DirectoryTreeNode -TreeNode $rootNode
+        $rootNode.Expand()
+    }
+    finally { $dirTree.EndUpdate() }
+    $suggestions = New-Object System.Collections.Generic.List[object]
+    $catalogIds = @{}
+    foreach ($suggestion in $Result.Suggestions) { $suggestions.Add($suggestion); if ($suggestion.CatalogId) { $catalogIds[$suggestion.CatalogId] = $true } }
+    if ($Result.Root.Equals('C:\', [StringComparison]::OrdinalIgnoreCase)) {
+        foreach ($suggestion in @(Get-CatalogSuggestions -Items $script:Items)) {
+            if (-not $catalogIds.ContainsKey($suggestion.CatalogId)) { $suggestions.Add($suggestion) }
+        }
+    }
+    Set-AnalysisListData -List $suggestionList -Data @($suggestions | Sort-Object -Property Bytes -Descending)
+    Set-AnalysisListData -List $largeFileList -Data @($Result.TopFiles)
+    Set-AnalysisListData -List $denseList -Data @($Result.DenseDirs)
+    Set-AnalysisListData -List $extensionList -Data @($Result.Extensions | Select-Object -First 500)
+    $suggestionList.Tag.SortColumn = 0
+    $analysisInfo.Text = '{0}：{1:N0} 个文件，{2:N0} 个文件夹，占用 {3}，用时 {4:N1} 秒{5}' -f $Result.Mode, $Result.TotalFiles, $Result.TotalDirs, (Format-ByteSize $Result.TotalAlloc), $Result.Seconds, $(if ($Result.Errors -gt 0) { '，{0:N0} 个位置无权限读取' -f $Result.Errors } else { '' })
+    if (-not [string]::IsNullOrWhiteSpace($Result.FallbackReason)) { $analysisInfo.Text += '（未使用 MFT：' + $Result.FallbackReason + '）' }
+    Write-AppLog ('空间分析完成：' + $analysisInfo.Text)
+}
+
+$analysisTimer = New-Object Windows.Forms.Timer
+$analysisTimer.Interval = 200
+$analysisTimer.Add_Tick({
+    $analyzer = $script:Analyzer
+    if ($null -eq $analyzer) { $analysisTimer.Stop(); return }
+    $seconds = ([datetime]::UtcNow - $analyzer.StartedUtc).TotalSeconds
+    if (-not $analyzer.Completed) {
+        $progressText = if ($analyzer.TotalBytesToRead -gt 0) { '，已读取 {0:N0}%' -f (100.0 * $analyzer.BytesRead / [Math]::Max(1, $analyzer.TotalBytesToRead)) } else { '' }
+        $analysisInfo.Text = '{0}：{1:N0} 个文件，{2:N0} 个文件夹{3}，{4:N0} 秒' -f $analyzer.Phase, $analyzer.FilesScanned, $analyzer.DirsScanned, $progressText, $seconds
+        return
+    }
+    $analysisTimer.Stop()
+    $script:Analyzer = $null
+    $analysisStartButton.Enabled = $true
+    $analysisStopButton.Enabled = $false
+    $analysisBrowseButton.Enabled = $true
+    if ($null -ne $analyzer.Error) {
+        $cause = $analyzer.Error
+        if ($cause -is [OperationCanceledException]) { $analysisInfo.Text = '分析已停止。' }
+        else { $analysisInfo.Text = '分析失败：' + $cause.Message; Write-AppLog $analysisInfo.Text }
+        return
+    }
+    try { Show-AnalysisResult -Result $analyzer.Result }
+    catch { $analysisInfo.Text = '显示结果失败：' + $_.Exception.Message }
+})
+
+function Start-SpaceAnalysis {
+    if ($null -ne $script:Analyzer) { return }
+    $root = $analysisRootBox.Text.Trim()
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+        [void][Windows.Forms.MessageBox]::Show('请选择存在的文件夹或分区。', '空间分析', 'OK', 'Information')
+        return
+    }
+    try {
+        Initialize-DiskAnalyzer
+        $analyzer = New-Object DiskAnalyzer
+        $analyzer.Start([IO.Path]::GetFullPath($root), $true)
+        $script:Analyzer = $analyzer
+        $analysisStartButton.Enabled = $false
+        $analysisStopButton.Enabled = $true
+        $analysisBrowseButton.Enabled = $false
+        $analysisInfo.Text = '正在准备分析…'
+        $analysisTimer.Start()
+    }
+    catch { $analysisInfo.Text = '无法开始分析：' + $_.Exception.Message }
+}
+
+$analysisStartButton.Add_Click({ Start-SpaceAnalysis })
+$analysisStopButton.Add_Click({ if ($null -ne $script:Analyzer) { $script:Analyzer.Cancel(); $analysisInfo.Text = '正在停止…' } })
+$analysisBrowseButton.Add_Click({
+    $dialog = New-Object Windows.Forms.FolderBrowserDialog
+    $dialog.Description = '选择要分析的分区或文件夹'
+    $dialog.SelectedPath = $analysisRootBox.Text
+    try { if ($dialog.ShowDialog($form) -eq [Windows.Forms.DialogResult]::OK) { $analysisRootBox.Text = $dialog.SelectedPath } }
+    finally { $dialog.Dispose() }
+})
+$openLocationButton.Add_Click({ Open-AnalysisLocation })
+$copyPathButton.Add_Click({
+    $entry = Get-ActiveAnalysisEntry
+    if ($null -ne $entry -and -not [string]::IsNullOrWhiteSpace($entry.Path)) { [Windows.Forms.Clipboard]::SetText($entry.Path) }
+})
+$recycleButton.Add_Click({
+    $entry = Get-ActiveAnalysisEntry
+    if ($null -eq $entry -or [string]::IsNullOrWhiteSpace($entry.Path)) { return }
+    if ($entry.Kind -eq 'Suggestion' -and -not $entry.Entry.CanRecycle) {
+        [void][Windows.Forms.MessageBox]::Show('此建议需要按说明在系统设置或对应程序中处理，不能直接删除。', '空间分析', 'OK', 'Information')
+        return
+    }
+    if (-not (Test-RecyclablePath -Path $entry.Path)) {
+        [void][Windows.Forms.MessageBox]::Show('此路径属于系统、程序或用户根目录，或已不存在，为安全起见不提供删除。', '受保护的位置', 'OK', 'Warning')
+        return
+    }
+    $answer = [Windows.Forms.MessageBox]::Show(('将以下内容移到回收站：' + [Environment]::NewLine + [Environment]::NewLine + $entry.Path + [Environment]::NewLine + [Environment]::NewLine + '请确认它不再需要，且相关程序已关闭。回收站仍占用 C 盘空间，确认无误后再清空回收站。继续吗？'), '移到回收站', 'YesNo', 'Warning')
+    if ($answer -ne [Windows.Forms.DialogResult]::Yes) { return }
+    try {
+        if (Move-PathToRecycleBin -Path $entry.Path) {
+            Write-AppLog ('已移到回收站：' + $entry.Path)
+            if ($null -ne $entry.Row) { $entry.Row.ForeColor = [Drawing.Color]::Gray; $entry.Row.Text = '已移除' }
+            if ($entry.Kind -eq 'Tree' -and $null -ne $entry.Node) { $entry.Node.Text = '〈已移到回收站〉 ' + $entry.Node.Text; $entry.Node.ForeColor = [Drawing.Color]::Gray }
+        }
+    }
+    catch { [void][Windows.Forms.MessageBox]::Show($_.Exception.Message, '未能移到回收站', 'OK', 'Error') }
+})
+$gotoItemButton.Enabled = $false
+$gotoItemButton.Add_Click({
+    $entry = Get-SelectedAnalysisEntry
+    if ($null -eq $entry -or $entry.Kind -ne 'Suggestion' -or -not $script:RowsById.ContainsKey($entry.Entry.CatalogId)) { return }
+    $row = $script:RowsById[$entry.Entry.CatalogId]
+    $filterBox.SelectedIndex = 0
+    $mainTabs.SelectedTab = $cleanTab
+    $grid.ClearSelection()
+    $row.Selected = $true
+    $grid.FirstDisplayedScrollingRowIndex = $row.Index
+    if ($row.Tag.Action -eq 'Manage') { Show-ItemDetails $row.Tag }
+})
+$exportButton.Add_Click({
+    if ($null -eq $script:AnalysisResult) { return }
+    $dialog = New-Object Windows.Forms.SaveFileDialog
+    $dialog.Filter = '文本文件 (*.txt)|*.txt'
+    $dialog.FileName = 'C盘空间分析-{0}.txt' -f (Get-Date -Format 'yyyyMMdd-HHmm')
+    try {
+        if ($dialog.ShowDialog($form) -eq [Windows.Forms.DialogResult]::OK) {
+            $lines = Write-AnalysisReport -Result $script:AnalysisResult -Top 100
+            [IO.File]::WriteAllLines($dialog.FileName, [string[]]@($lines), (New-Object Text.UTF8Encoding($true)))
+        }
+    }
+    finally { $dialog.Dispose() }
+})
+
+# ---- 定时清理页：只允许完全可重建、无需管理员的低风险项目 ----
+
+$scheduleLayout = New-Object Windows.Forms.TableLayoutPanel
+$scheduleLayout.Dock = 'Fill'
+$scheduleLayout.ColumnCount = 1
+$scheduleLayout.RowCount = 5
+$scheduleLayout.Padding = New-Object Windows.Forms.Padding(10)
+[void]$scheduleLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 74)))
+[void]$scheduleLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Percent, 100)))
+[void]$scheduleLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 40)))
+[void]$scheduleLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 44)))
+[void]$scheduleLayout.RowStyles.Add((New-Object Windows.Forms.RowStyle([Windows.Forms.SizeType]::Absolute, 30)))
+$scheduleTab.Controls.Add($scheduleLayout)
+
+$scheduleIntro = New-Object Windows.Forms.Label
+$scheduleIntro.Dock = 'Fill'
+$scheduleIntro.Text = '每天在指定时间自动清理下列无风险项目：只包含可自动重建、不含个人数据、也不需要管理员权限的旧运行日志和过期临时文件。' + [Environment]::NewLine +
+    '每次执行前都会检查相关程序是否在运行，运行中的项目会跳过；错过时间（例如关机）会在下次开机后补跑。结果写入日志目录，保留 30 天。'
+$scheduleLayout.Controls.Add($scheduleIntro, 0, 0)
+
+$scheduleList = New-Object Windows.Forms.CheckedListBox
+$scheduleList.Dock = 'Fill'
+$scheduleList.CheckOnClick = $true
+$scheduleList.HorizontalScrollbar = $true
+$scheduleLayout.Controls.Add($scheduleList, 0, 1)
+$script:ScheduleItemIds = New-Object System.Collections.Generic.List[string]
+$scheduleConfig = Get-ScheduleConfig
+$scheduleHasSaved = Test-Path -LiteralPath (Get-ScheduleConfigPath) -PathType Leaf
+foreach ($eligible in @(Get-ScheduleEligibleItems -Items $script:Items)) {
+    $index = $scheduleList.Items.Add(('{0} — {1}' -f $eligible.Name, $eligible.Description))
+    $script:ScheduleItemIds.Add($eligible.Id)
+    $checked = if ($scheduleHasSaved) { $scheduleConfig.ItemIds -contains $eligible.Id } else { $eligible.Id -ne 'user-temp-old' }
+    $scheduleList.SetItemChecked($index, $checked)
+}
+
+$scheduleSettings = New-Object Windows.Forms.FlowLayoutPanel
+$scheduleSettings.Dock = 'Fill'
+$scheduleLayout.Controls.Add($scheduleSettings, 0, 2)
+$scheduleTimeLabel = New-Object Windows.Forms.Label
+$scheduleTimeLabel.Text = '每天运行时间：'
+$scheduleTimeLabel.AutoSize = $true
+$scheduleTimeLabel.Margin = New-Object Windows.Forms.Padding(0, 8, 0, 0)
+$scheduleTime = New-Object Windows.Forms.DateTimePicker
+$scheduleTime.Format = 'Custom'
+$scheduleTime.CustomFormat = 'HH:mm'
+$scheduleTime.ShowUpDown = $true
+$scheduleTime.Width = 70
+$scheduleTime.Value = [datetime]::Today.Add([TimeSpan]::Parse($scheduleConfig.Time))
+$scheduleKeepLabel = New-Object Windows.Forms.Label
+$scheduleKeepLabel.Text = '旧日志保留：'
+$scheduleKeepLabel.AutoSize = $true
+$scheduleKeepLabel.Margin = New-Object Windows.Forms.Padding(24, 8, 0, 0)
+$scheduleKeep = New-Object Windows.Forms.ComboBox
+$scheduleKeep.DropDownStyle = 'DropDownList'
+$scheduleKeep.Width = 80
+[void]$scheduleKeep.Items.Add('7 天')
+[void]$scheduleKeep.Items.Add('30 天')
+$scheduleKeep.SelectedIndex = if ($scheduleConfig.LogKeepDays -eq 30) { 1 } else { 0 }
+$scheduleSettings.Controls.AddRange(@($scheduleTimeLabel, $scheduleTime, $scheduleKeepLabel, $scheduleKeep))
+
+$scheduleButtons = New-Object Windows.Forms.FlowLayoutPanel
+$scheduleButtons.Dock = 'Fill'
+$scheduleLayout.Controls.Add($scheduleButtons, 0, 3)
+$scheduleEnableButton = New-ToolbarButton -Text '保存并启用' -Width 110
+$scheduleDisableButton = New-ToolbarButton -Text '停用' -Width 80
+$scheduleRunButton = New-ToolbarButton -Text '立即运行一次' -Width 118
+$scheduleLogButton = New-ToolbarButton -Text '打开日志目录' -Width 118
+$scheduleButtons.Controls.AddRange(@($scheduleEnableButton, $scheduleDisableButton, $scheduleRunButton, $scheduleLogButton))
+
+$scheduleState = New-Object Windows.Forms.Label
+$scheduleState.Dock = 'Fill'
+$scheduleLayout.Controls.Add($scheduleState, 0, 4)
+
+function Get-ScheduleConfigFromUi {
+    $ids = @()
+    for ($i = 0; $i -lt $scheduleList.Items.Count; $i++) { if ($scheduleList.GetItemChecked($i)) { $ids += $script:ScheduleItemIds[$i] } }
+    return [pscustomobject]@{ Enabled = $true; Time = $scheduleTime.Value.ToString('HH:mm'); LogKeepDays = $(if ($scheduleKeep.SelectedIndex -eq 1) { 30 } else { 7 }); ItemIds = $ids }
+}
+
+function Update-ScheduleState {
+    try { $scheduleState.Text = '当前状态：' + (Get-DailyCleanupTaskState) }
+    catch { $scheduleState.Text = '当前状态：无法读取计划任务 — ' + $_.Exception.Message }
+}
+
+$scheduleEnableButton.Add_Click({
+    $config = Get-ScheduleConfigFromUi
+    if (@($config.ItemIds).Count -eq 0) { [void][Windows.Forms.MessageBox]::Show('请至少勾选一个项目。', '定时清理', 'OK', 'Information'); return }
+    if ($script:ElevationIdentityMismatch) { [void][Windows.Forms.MessageBox]::Show('当前管理员账户与原账户不同，请在原账户的普通窗口中设置定时清理。', '定时清理', 'OK', 'Warning'); return }
+    try {
+        Register-DailyCleanupTask -Config $config
+        Write-AppLog ('已启用每日定时清理：{0}，{1} 个项目。' -f $config.Time, @($config.ItemIds).Count)
+    }
+    catch { [void][Windows.Forms.MessageBox]::Show('无法创建计划任务：' + $_.Exception.Message, '定时清理', 'OK', 'Error') }
+    Update-ScheduleState
+})
+$scheduleDisableButton.Add_Click({
+    try { Unregister-DailyCleanupTask; Write-AppLog '已停用每日定时清理。' }
+    catch { [void][Windows.Forms.MessageBox]::Show('无法停用计划任务：' + $_.Exception.Message, '定时清理', 'OK', 'Error') }
+    Update-ScheduleState
+})
+$scheduleRunButton.Add_Click({
+    $config = Get-ScheduleConfigFromUi
+    if (@($config.ItemIds).Count -eq 0) { [void][Windows.Forms.MessageBox]::Show('请至少勾选一个项目。', '定时清理', 'OK', 'Information'); return }
+    try {
+        $config.Enabled = (Get-ScheduleConfig).Enabled
+        Save-ScheduleConfig -Config $config
+        $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        Start-Process -FilePath $powershell -WindowStyle Hidden -ArgumentList ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -ScheduledClean' -f $script:ScriptPath) | Out-Null
+        Write-AppLog '定时清理已在后台运行一次，结果写入日志目录。'
+        [void][Windows.Forms.MessageBox]::Show('已在后台开始清理已勾选的项目。完成后可点击“打开日志目录”查看结果。', '定时清理', 'OK', 'Information')
+    }
+    catch { [void][Windows.Forms.MessageBox]::Show('无法启动：' + $_.Exception.Message, '定时清理', 'OK', 'Error') }
+})
+$scheduleLogButton.Add_Click({
+    $logDirectory = Join-Path (Get-ScheduleDirectory) 'logs'
+    [void][IO.Directory]::CreateDirectory($logDirectory)
+    Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"{0}"' -f $logDirectory) | Out-Null
+})
+$mainTabs.Add_SelectedIndexChanged({ if ($mainTabs.SelectedTab -eq $scheduleTab) { Update-ScheduleState } })
+
 $form.Add_FormClosing({
     param($sender, $eventArgs)
+    if ($null -ne $script:Analyzer) { $script:Analyzer.Cancel() }
     if ($script:Busy) {
         $eventArgs.Cancel = $true
         $script:CloseWhenIdle = $true
@@ -1963,11 +4301,12 @@ $form.Add_Shown({
 })
 
 if ($UiSmokeTest) {
-    Write-Output ('UI 构造成功：{0} 个清理项目，{1} 行；目标 {2} GB；按项目停止={3}；账户不一致保护={4}。' -f $script:Items.Count, $grid.Rows.Count, $goalBox.Value, $stopAtGoalCheck.Checked, $script:ElevationIdentityMismatch)
+    Write-Output ('UI 构造成功：{0} 个清理项目，{1} 行；目标 {2} GB；按项目停止={3}；账户不一致保护={4}；页面 {5} 个；定时可选 {6} 项。' -f $script:Items.Count, $grid.Rows.Count, $goalBox.Value, $stopAtGoalCheck.Checked, $script:ElevationIdentityMismatch, $mainTabs.TabPages.Count, $scheduleList.Items.Count)
     $workerTimer.Dispose()
+    $analysisTimer.Dispose()
     $form.Dispose()
     exit 0
 }
 
 try { [void][Windows.Forms.Application]::Run($form) }
-finally { $workerTimer.Dispose(); $form.Dispose() }
+finally { $workerTimer.Dispose(); $analysisTimer.Dispose(); $form.Dispose() }

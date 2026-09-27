@@ -19,6 +19,8 @@ jobs:
           persist-credentials: false
       - name: Cleanup regression tests
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\tests\Test-Cleanup.ps1
+      - name: Space analysis and scheduled cleanup
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\tests\Test-Analyzer.ps1 -IncludeTaskRegistration
       - name: Numeric size sorting
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\tests\Test-SizeSort.ps1
       - name: Construct interface
