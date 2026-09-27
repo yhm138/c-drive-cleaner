@@ -255,6 +255,72 @@ try {
         'removed={0}, kept={1}' -f $gone.Count, $keep.Count
     }
 
+    Invoke-Case 'Installed-program items clean only rebuildable caches and old logs' {
+        $profileRoot = Join-Path $fixtureRoot 'profile2'
+        $roaming = Join-Path $profileRoot 'AppData\Roaming'
+        $local = Join-Path $profileRoot 'AppData\Local'
+        $teams = Join-Path $local 'Packages\MSTeams_8wekyb3d8bbwe\LocalCache\Microsoft\MSTeams'
+        $gone = New-Object System.Collections.Generic.List[string]
+        $keep = New-Object System.Collections.Generic.List[string]
+        foreach ($path in @(
+            (Join-Path $teams 'EBWebView\Default\Cache\Cache_Data\f_000001'), (Join-Path $teams 'EBWebView\GPUCache\data_0'),
+            (Join-Path $roaming 'aDrive\Cache\chunk.tmp'), (Join-Path $roaming 'Typora\Code Cache\js\a'),
+            (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\ComponentModelCache\Microsoft.VisualStudio.Default.cache'),
+            (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\Designer\ShadowCache\x\y.dll'),
+            (Join-Path $profileRoot '.rustup\downloads\partial.xz'), (Join-Path $profileRoot '.rustup\tmp\t'),
+            (Join-Path $profileRoot '.texlive2024\texmf-var\luatex-cache\generic\fonts\otl\a.luc'),
+            (Join-Path $profileRoot 'AppData\LocalLow\Sun\Java\Deployment\cache\6.0\1\x.idx'),
+            (Join-Path $local 'Microsoft\Windows\WER\ReportArchive\AppCrash_x\Report.wer'))) { $gone.Add((New-SizedFile $path 1KB)) }
+        foreach ($path in @(
+            (Join-Path $roaming 'Tencent\WeMeet\Global\Logs\wemeet_1.xlog'), (Join-Path $roaming 'obs-studio\logs\2025-01-01 10-00-00.txt'),
+            (Join-Path $roaming 'obs-studio\crashes\Crash 2025-01-01.txt'), (Join-Path $profileRoot '.local\share\opencode\log\2025-01-01T000000.log'),
+            (Join-Path $profileRoot '.config\clash\logs\2025-01-01.log'))) { $gone.Add((New-SizedFile $path 1KB -AgeDays 40)) }
+        foreach ($path in @(
+            (Join-Path $teams 'EBWebView\Default\Local Storage\leveldb\000003.log'), (Join-Path $teams 'app_settings.json'),
+            (Join-Path $roaming 'Typora\draftsRecover\note.md'), (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\privateregistry.bin'),
+            (Join-Path $profileRoot '.rustup\toolchains\stable\bin\rustc.exe'), (Join-Path $profileRoot '.texlive2024\texmf-config\tex\a.cfg'),
+            (Join-Path $roaming 'obs-studio\basic\scenes\Untitled.json'), (Join-Path $profileRoot '.config\clash\config.yaml'),
+            (Join-Path $local 'Packages\CanonicalGroupLimited.Ubuntu22.04LTS_79rhkp1fndgsc\LocalState\ext4.vhdx'))) { $keep.Add((New-SizedFile $path 1KB -AgeDays 40)) }
+        $keep.Add((New-SizedFile (Join-Path $roaming 'Tencent\WeMeet\Global\Logs\wemeet_today.xlog') 1KB -AgeDays 1))
+        $saved = @{ APPDATA = $env:APPDATA; LOCALAPPDATA = $env:LOCALAPPDATA; USERPROFILE = $env:USERPROFILE }
+        try {
+            $env:APPDATA = $roaming; $env:LOCALAPPDATA = $local; $env:USERPROFILE = $profileRoot
+            $list = New-Object Collections.ArrayList
+            Add-InstalledAppCleanupItems -List $list
+        }
+        finally { $env:APPDATA = $saved.APPDATA; $env:LOCALAPPDATA = $saved.LOCALAPPDATA; $env:USERPROFILE = $saved.USERPROFILE }
+        $approved = @{
+            'teams-cache' = '\\EBWebView(\\Default)?\\(Cache|Code Cache|GPUCache)$'; 'adrive-cache' = '\\aDrive\\(Cache|Code Cache|GPUCache)$'
+            'typora-cache' = '\\Typora\\(Cache|Code Cache|GPUCache)$'; 'visualstudio-cache' = '\\VisualStudio\\1[67]\.0_[^\\]+\\(ComponentModelCache|Designer\\ShadowCache)$'
+            'rustup-temp' = '\\\.rustup\\(downloads|tmp)$'; 'texlive-luatex-cache' = '\\\.texlive[^\\]*\\texmf-var\\luatex-cache$'
+            'java-deployment-cache' = '\\Sun\\Java\\Deployment\\cache$'; 'user-error-reports' = '\\WER\\(ReportArchive|ReportQueue)$'
+            'wemeet-old-logs' = '\\WeMeet\\(Global\\)?Logs$'; 'obs-old-logs' = '\\obs-studio\\(logs|crashes)$'
+            'opencode-old-logs' = '\\opencode\\log$'; 'cfw-old-logs' = '\\\.config\\clash\\logs$'
+        }
+        $manual = @('manage-wsl-disks', 'manage-iphone-backups', 'manage-texlive', 'manage-vs-installer-cache', 'manage-mysql-data', 'manage-capcut', 'manage-wechat-devtools')
+        Assert-True ($list.Count -eq ($approved.Count + $manual.Count)) ('Unexpected item count ' + $list.Count)
+        $script:LogKeepDays = 7
+        $script:PolicyReferenceUtc = [datetime]::UtcNow
+        $wsl = @($list | Where-Object { $_.Id -eq 'manage-wsl-disks' })[0]
+        Assert-True (@($wsl.PathSpecs | Where-Object { $_.Path -like '*CanonicalGroupLimited*LocalState' }).Count -eq 1) 'WSL distribution not discovered.'
+        foreach ($item in $list) {
+            Assert-True (-not $item.DefaultSelected) ('Default selected: ' + $item.Id)
+            if ($manual -contains $item.Id) { Assert-True ($item.Action -eq 'Manage') ('Data item is not manual: ' + $item.Id); continue }
+            Assert-True ($approved.ContainsKey($item.Id) -and $item.Action -eq 'Paths' -and -not $item.RequiresAdmin) ('Unreviewed item ' + $item.Id)
+            Assert-True (@($item.PathSpecs).Count -gt 0) ('Fixture not discovered for ' + $item.Id)
+            if ($item.Id -like '*logs') { Assert-True ($item.UseLogRetention -and (Test-ScheduleSafeItem $item)) ('Log item not retention/schedule safe: ' + $item.Id) }
+            foreach ($spec in @($item.PathSpecs)) {
+                Assert-True ($spec.Path -match $approved[$item.Id]) ('Unapproved path for ' + $item.Id + ': ' + $spec.Path)
+                Assert-True ($spec.Path.StartsWith($profileRoot + '\', [StringComparison]::OrdinalIgnoreCase)) ('Path escaped fixture: ' + $spec.Path)
+            }
+            $item.ProcessNames = @()
+            [void](Invoke-CleanupAction -Item $item)
+        }
+        foreach ($path in $gone) { Assert-True (-not (Test-Path -LiteralPath $path)) ('Not cleaned: ' + $path) }
+        foreach ($path in $keep) { Assert-True (Test-Path -LiteralPath $path) ('User data deleted: ' + $path) }
+        'removed={0}, kept={1}' -f $gone.Count, $keep.Count
+    }
+
     Invoke-Case 'Schedule configuration round-trips and sanitises input' {
         Save-ScheduleConfig -Config ([pscustomobject]@{ Enabled = $true; Time = '07:45'; LogKeepDays = 30; ItemIds = @('trae-old-logs', 'bad id;rm') })
         $config = Get-ScheduleConfig

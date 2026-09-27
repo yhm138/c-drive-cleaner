@@ -39,7 +39,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\CDriveCleaner.ps1
 
 ## 功能
 
-- **64 个项目**：49 个清理项目和 15 个管理入口，覆盖 QQ、豆包、TRAE、Codex、Claude、Antigravity、微信等常用应用。
+- **83 个项目**：61 个清理项目和 22 个管理入口，覆盖 QQ、豆包、TRAE、Codex、Claude、Antigravity、微信、腾讯会议、Teams、Visual Studio、TeX Live、WSL 等常用软件。
 - **后台处理**：扫描、删除、清理后的重新扫描在独立任务中执行，提供进度和停止按钮。
 - **按大小排序**：点击“预计可释放”表头切换升降序，直接比较原始字节数；“未知、未扫描、待重新扫描、仅管理”始终排在末尾。
 - **日志保留期**：所有“旧运行日志”项目可选择保留最近 7 天或 30 天。
@@ -50,12 +50,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\CDriveCleaner.ps1
 
 | 类别 | 示例 |
 |---|---|
-| 开发工具缓存 | pip、npm/npx、Cargo、NuGet、Gradle、Maven、Nuitka、node-gyp、VS Code C++ 分析缓存 |
+| 开发工具缓存 | pip、npm/npx、Cargo、rustup 下载与临时文件、NuGet、Gradle、Maven、Nuitka、node-gyp、VS Code C++ 分析缓存、Visual Studio 组件与设计器缓存、TeX Live LuaTeX 字体缓存、Java 部署缓存 |
 | 编辑器与工具缓存 | VS Code、JetBrains、明确目录中的模型与工具缓存 |
 | 浏览器缓存 | Chrome、Edge 普通缓存、离线站点缓存和崩溃报告 |
-| 桌面应用缓存 | QQ、豆包、Codex、Claude、飞书普通网页缓存；TRAE、Antigravity 的网页/编译/图形/扩展安装包缓存；Codex、飞书离线站点缓存单独列出 |
-| 旧运行日志 | QQ（含各账号 `nt_data\log`）、豆包、TRAE、Antigravity、Codex 桌面版与 CLI（`~/.codex/log`）、Claude 桌面版（含 MCP 日志）、Claude Code 调试日志（`~/.claude/debug`）、微信、Wolfram、Clash Verge |
-| 系统相关 | 临时文件（全部或仅 7 天前）、崩溃转储、图形缓存、NVIDIA 下载缓存、当前用户 C 盘回收站、旧安装监控日志、关闭休眠 |
+| 桌面应用缓存 | QQ、豆包、Codex、Claude、飞书、Microsoft Teams、Typora 普通网页缓存，阿里云盘缓存；TRAE、Antigravity 的网页/编译/图形/扩展安装包缓存；Codex、飞书离线站点缓存单独列出 |
+| 旧运行日志 | QQ（含各账号 `nt_data\log`）、豆包、TRAE、Antigravity、Codex 桌面版与 CLI（`~/.codex/log`）、Claude 桌面版（含 MCP 日志）、Claude Code 调试日志（`~/.claude/debug`）、腾讯会议、OBS Studio、OpenCode、Clash for Windows、微信、Wolfram、Clash Verge |
+| 系统相关 | 临时文件（全部或仅 7 天前）、用户级错误报告、崩溃转储、图形缓存、NVIDIA 下载缓存、当前用户 C 盘回收站、旧安装监控日志、关闭休眠 |
 
 新增的应用缓存和日志项目默认不勾选。原有部分低风险项目会在扫描后默认选中；“勾选低风险项”会主动选择当前可用的低风险项目。请在确认窗口检查最终清单。
 
@@ -65,7 +65,7 @@ Windows 安装监控日志仅限 `Panther\monitor` 内 30 天前的 `.log`；安
 
 ### 管理入口
 
-QQ 聊天文件与缓存、豆包模型与生成内容、Codex 任务记录（sessions）、Claude Code 会话记录（projects、file-history）、Antigravity 对话与产出（`~/.gemini/antigravity` 中的 conversations、brain 等）、微信聊天文件、下载文件夹、微信更新包、NVIDIA App 更新资源、其他应用更新下载、Playwright 浏览器、剪映资源缓存、uv 缓存、Windows 存储设置、已安装应用。
+WSL 虚拟磁盘、iPhone/iPad 备份、TeX Live 安装、Visual Studio 安装包缓存、MySQL 数据与二进制日志、CapCut 资源缓存、微信开发者工具数据、QQ 聊天文件与缓存、豆包模型与生成内容、Codex 任务记录（sessions）、Claude Code 会话记录（projects、file-history）、Antigravity 对话与产出（`~/.gemini/antigravity` 中的 conversations、brain 等）、微信聊天文件、下载文件夹、微信更新包、NVIDIA App 更新资源、其他应用更新下载、Playwright 浏览器、剪映资源缓存、uv 缓存、Windows 存储设置、已安装应用。
 
 这些项目显示“仅管理”，不能加入批量清理。点击“打开管理”可查看目录、操作建议或进入系统设置；目录总大小不会当成可释放空间。
 

@@ -22,7 +22,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:AppVersion = '2.0.0'
+$script:AppVersion = '2.1.0'
 $script:ScriptPath = $MyInvocation.MyCommand.Path
 $script:ScheduleConfigOverride = $ScheduleConfigPath
 $script:IsAdministrator = $false
@@ -471,6 +471,93 @@ function Add-AppDataCleanupItems {
         -Description '查看 Claude Code 的会话记录与文件历史，不参加清理。Claude Code 会按 settings.json 中的 cleanupPeriodDays（默认 30 天）自动删除旧会话，可调小该值；手动删除后无法 --resume 这些会话。'
 }
 
+function Add-InstalledAppCleanupItems {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.ArrayList]$List)
+    $electronLeaves = @('Cache', 'Code Cache', 'GPUCache')
+
+    # Microsoft Teams (new): only the WebView2 cache leaves, not sign-in or settings data.
+    $teamsWebView = @(Get-ExtendedAppRoots -PackagePattern 'MSTeams_*' -PackageRelativePath 'LocalCache\Microsoft\MSTeams\EBWebView' -FallbackPaths @())
+    $teamsProfiles = @(Get-ExtendedElectronProfileRoots -Roots @(@($teamsWebView) + @($teamsWebView | ForEach-Object { Join-Path $_ 'Default' }) | Where-Object { Test-ExtendedSafeDirectory -Path $_ }))
+    Add-CleanupItem -List $List -Id 'teams-cache' -Name 'Microsoft Teams 普通网页缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedElectronPathSpecs -ProfileRoots $teamsProfiles) -ProcessNames @('ms-teams', 'msteams') `
+        -Description '退出 Teams 后清理内嵌网页的普通缓存；不涉及登录状态、聊天记录和设置。'
+
+    Add-CleanupItem -List $List -Id 'adrive-cache' -Name '阿里云盘 缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:APPDATA 'aDrive')) -Leaves $electronLeaves) -ProcessNames @('aDrive') `
+        -Description '退出阿里云盘后清理客户端缓存（大量下载后可能很大）；未完成的下载需要重新开始，不涉及已下载到本地的文件和登录信息。'
+    Add-CleanupItem -List $List -Id 'typora-cache' -Name 'Typora 普通网页缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:APPDATA 'Typora')) -Leaves $electronLeaves) -ProcessNames @('Typora') `
+        -Description '退出 Typora 后清理界面缓存；不涉及文档、草稿恢复目录、主题和设置。'
+
+    # Developer tools found on this machine type.
+    $vsRoots = New-Object System.Collections.ArrayList
+    foreach ($pattern in @('17.0_*', '16.0_*')) {
+        foreach ($instance in @(Get-ExtendedSafeChildDirectories -Path (Join-Path $env:LOCALAPPDATA 'Microsoft\VisualStudio') -NamePattern $pattern)) { [void]$vsRoots.Add($instance) }
+    }
+    Add-CleanupItem -List $List -Id 'visualstudio-cache' -Name 'Visual Studio 组件与设计器缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @($vsRoots.ToArray()) -Leaves @('ComponentModelCache', 'Designer\ShadowCache')) -ProcessNames @('devenv', 'Blend') `
+        -Description '关闭 Visual Studio 后清理 MEF 组件缓存和设计器影子副本，下次启动自动重建（首次启动稍慢），也常用于修复扩展加载异常；不涉及设置、扩展和项目。'
+    Add-CleanupItem -List $List -Id 'rustup-temp' -Name 'rustup 下载与临时文件' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:USERPROFILE '.rustup')) -Leaves @('downloads', 'tmp')) -ProcessNames @('rustup', 'cargo', 'rustc') `
+        -Description '清理 rustup 安装和更新留下的下载包与临时文件；不涉及已安装的工具链。先结束 rustup/cargo。'
+    $texliveHomes = @(Get-ExtendedSafeChildDirectories -Path $env:USERPROFILE -NamePattern '.texlive*')
+    Add-CleanupItem -List $List -Id 'texlive-luatex-cache' -Name 'TeX Live LuaTeX 字体缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $texliveHomes -Leaves @('texmf-var\luatex-cache')) -ProcessNames @('lualatex', 'luatex', 'luahbtex', 'latexmk', 'texworks') `
+        -Description '清理各年份 TeX Live 的 LuaTeX 字体缓存；下次用 LuaLaTeX 编译时自动重建，首次编译会变慢。不涉及宏包和文档。'
+    Add-CleanupItem -List $List -Id 'java-deployment-cache' -Name 'Java 部署缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE 'AppData\LocalLow\Sun\Java\Deployment\cache'))) -ProcessNames @('javaw', 'javaws', 'jp2launcher') `
+        -Description 'Java Web Start 与小程序下载的临时缓存，需要时重新下载；不涉及 JDK/JRE 和 Java 程序本身。'
+    Add-CleanupItem -List $List -Id 'user-error-reports' -Name '用户级 Windows 错误报告' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\WER')) -Leaves @('ReportArchive', 'ReportQueue')) `
+        -Description '删除当前用户的应用崩溃与错误报告（含附带的转储）；正在排查程序崩溃时请保留。'
+
+    # Old logs; all have a retention guard and may run on the daily schedule.
+    Add-CleanupItem -List $List -Id 'wemeet-old-logs' -Name '腾讯会议 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:APPDATA 'Tencent\WeMeet\Global\Logs'), (Join-Path $env:APPDATA 'Tencent\WeMeet\Logs'))) `
+        -UseLogRetention $true -FilePatterns @('*.log', '*.xlog') -ProcessNames @('wemeetapp', 'WeMeet', 'wemeet') -ScheduleSafe $true `
+        -Description '按保留天数清理腾讯会议 Logs 中的旧 .log/.xlog（长期使用后可能达到数 GB）；不涉及会议录制文件和账号数据。先退出腾讯会议。'
+    Add-CleanupItem -List $List -Id 'obs-old-logs' -Name 'OBS Studio 旧日志与崩溃报告' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:APPDATA 'obs-studio')) -Leaves @('logs', 'crashes')) `
+        -UseLogRetention $true -FilePatterns @('*.txt', '*.log') -ProcessNames @('obs64', 'obs32', 'obs') -ScheduleSafe $true `
+        -Description '按保留天数清理 OBS 的 logs 与 crashes 中的旧文本日志；不涉及录像、场景和配置。先退出 OBS。'
+    Add-CleanupItem -List $List -Id 'opencode-old-logs' -Name 'OpenCode 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.local\share\opencode\log'))) `
+        -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('opencode', 'OpenCode') -ScheduleSafe $true `
+        -Description '按保留天数清理 ~/.local/share/opencode/log 中的旧日志；不涉及会话、项目数据和配置。'
+    Add-CleanupItem -List $List -Id 'cfw-old-logs' -Name 'Clash for Windows 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.config\clash\logs'))) `
+        -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('Clash for Windows', 'clash-win64', 'clash') -ScheduleSafe $true `
+        -Description '按保留天数清理 ~/.config/clash/logs 中的旧日志；不涉及订阅配置和规则。先退出 Clash for Windows。'
+
+    # Large data that only its owning program should manage.
+    $wslPaths = New-Object System.Collections.ArrayList
+    foreach ($pattern in @('CanonicalGroupLimited.*', 'TheDebianProject.*', '*openSUSE*', 'KaliLinux.*', 'WhitewaterFoundryLtd.*')) {
+        foreach ($package in @(Get-ExtendedSafeChildDirectories -Path (Join-Path $env:LOCALAPPDATA 'Packages') -NamePattern $pattern)) { [void]$wslPaths.Add((Join-Path $package 'LocalState')) }
+    }
+    [void]$wslPaths.Add((Join-Path $env:LOCALAPPDATA 'wsl'))
+    Add-CleanupItem -List $List -Id 'manage-wsl-disks' -Name '手动管理：WSL 虚拟磁盘' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @($wslPaths.ToArray())) `
+        -Description '查看 WSL 发行版的 ext4.vhdx，不参加清理。先在 Linux 内删除不需要的文件，再运行 wsl --shutdown 和 wsl --manage <发行版> --set-sparse true 让磁盘自动收缩；也可用 wsl --manage <发行版> --move 迁移到其他盘。直接删除 vhdx 会丢失整个发行版。'
+    Add-CleanupItem -List $List -Id 'manage-iphone-backups' -Name '手动管理：iPhone/iPad 备份' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:APPDATA 'Apple Computer\MobileSync\Backup'), (Join-Path $env:USERPROFILE 'Apple\MobileSync\Backup'))) `
+        -Description '查看 iTunes/Apple 设备的本地备份，单个备份可达数十 GB，不参加清理。请在 Apple Devices 或 iTunes 的“管理备份”中删除旧设备的备份。'
+    Add-CleanupItem -List $List -Id 'manage-texlive' -Name '手动管理：TeX Live 安装' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @('C:\texlive')) `
+        -Description '查看 TeX Live 各年份目录，不参加清理。只保留正在使用的年份，旧年份通过其卸载程序移除；可用 tlmgr 选项不安装文档和源码（tlmgr option docfiles 0 / srcfiles 0）来缩小体积。'
+    Add-CleanupItem -List $List -Id 'manage-vs-installer-cache' -Name '手动管理：Visual Studio 安装包缓存' -Risk '中' -DefaultSelected $false -RequiresAdmin $true -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:ProgramData 'Microsoft\VisualStudio\Packages'))) `
+        -Description '查看 Visual Studio Installer 的下载缓存，不参加清理。可在 Visual Studio Installer 中关闭“保留下载缓存”，或运行 vs_installer 时加 --nocache；手动删除后修复和修改工作负载需要重新下载。'
+    Add-CleanupItem -List $List -Id 'manage-mysql-data' -Name '手动管理：MySQL 数据与二进制日志' -Risk '高' -DefaultSelected $false -RequiresAdmin $true -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:ProgramData 'MySQL'))) `
+        -Description '查看 MySQL 数据目录，不参加清理。binlog 可能占用大量空间：在 MySQL 中执行 PURGE BINARY LOGS BEFORE NOW() - INTERVAL 7 DAY，或设置 binlog_expire_logs_seconds；切勿直接删除数据目录中的文件。'
+    Add-CleanupItem -List $List -Id 'manage-capcut' -Name '手动管理：CapCut 资源缓存' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:LOCALAPPDATA 'CapCut\User Data\Cache'))) `
+        -Description '含特效、素材与模型缓存，优先在 CapCut 设置中清理缓存；仅提供查看，不包含草稿。'
+    Add-CleanupItem -List $List -Id 'manage-wechat-devtools' -Name '手动管理：微信开发者工具数据' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:LOCALAPPDATA '微信开发者工具\User Data'))) `
+        -Description '查看微信开发者工具的用户数据，不参加清理。请在工具菜单“设置 → 清除缓存”中按类型清理（文件缓存、编译缓存、网络缓存等），避免误删登录态和项目配置。'
+}
+
 
 function Get-CleanupCatalog {
     $list = New-Object System.Collections.ArrayList
@@ -602,6 +689,7 @@ function Get-CleanupCatalog {
 
     Add-ExtendedCleanupItems -List $list
     Add-AppDataCleanupItems -List $list
+    Add-InstalledAppCleanupItems -List $list
     return @($list)
 }
 
