@@ -3894,6 +3894,8 @@ $analysisSplit = New-Object Windows.Forms.SplitContainer
 $analysisSplit.Dock = 'Fill'
 $analysisSplit.Orientation = 'Vertical'
 $analysisSplit.SplitterDistance = 440
+$analysisSplit.Panel1MinSize = 280
+$analysisSplit.Panel2MinSize = 420
 $analysisLayout.Controls.Add($analysisSplit, 0, 1)
 
 $dirTree = New-Object Windows.Forms.TreeView
@@ -4389,7 +4391,15 @@ $scheduleLogButton.Add_Click({
     [void][IO.Directory]::CreateDirectory($logDirectory)
     Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"{0}"' -f $logDirectory) | Out-Null
 })
-$mainTabs.Add_SelectedIndexChanged({ if ($mainTabs.SelectedTab -eq $scheduleTab) { Update-ScheduleState } })
+$script:AnalysisSplitSized = $false
+$mainTabs.Add_SelectedIndexChanged({
+    if ($mainTabs.SelectedTab -eq $scheduleTab) { Update-ScheduleState }
+    # The page has no real size until first shown; give the lists (paths, advice) the larger share.
+    if ($mainTabs.SelectedTab -eq $analysisTab -and -not $script:AnalysisSplitSized -and $analysisSplit.Width -gt 600) {
+        $analysisSplit.SplitterDistance = [int]($analysisSplit.Width * 0.38)
+        $script:AnalysisSplitSized = $true
+    }
+})
 
 $form.Add_FormClosing({
     param($sender, $eventArgs)
