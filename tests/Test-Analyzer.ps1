@@ -267,6 +267,8 @@ try {
             (Join-Path $roaming 'aDrive\Cache\chunk.tmp'), (Join-Path $roaming 'Typora\Code Cache\js\a'),
             (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\ComponentModelCache\Microsoft.VisualStudio.Default.cache'),
             (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\Designer\ShadowCache\x\y.dll'),
+            (Join-Path $local 'Microsoft\VisualStudio\15.0_def456\ComponentModelCache\Microsoft.VisualStudio.Default.cache'),
+            (Join-Path $roaming 'Microsoft\Teams\Cache\f_000002'), (Join-Path $roaming 'Microsoft\Teams\GPUCache\data_1'),
             (Join-Path $profileRoot '.rustup\downloads\partial.xz'), (Join-Path $profileRoot '.rustup\tmp\t'),
             (Join-Path $profileRoot '.texlive2024\texmf-var\luatex-cache\generic\fonts\otl\a.luc'),
             (Join-Path $profileRoot 'AppData\LocalLow\Sun\Java\Deployment\cache\6.0\1\x.idx'),
@@ -277,6 +279,7 @@ try {
             (Join-Path $profileRoot '.config\clash\logs\2025-01-01.log'))) { $gone.Add((New-SizedFile $path 1KB -AgeDays 40)) }
         foreach ($path in @(
             (Join-Path $teams 'EBWebView\Default\Local Storage\leveldb\000003.log'), (Join-Path $teams 'app_settings.json'),
+            (Join-Path $roaming 'Microsoft\Teams\desktop-config.json'), (Join-Path $roaming 'Microsoft\Teams\IndexedDB\db.leveldb\000005.ldb'),
             (Join-Path $roaming 'Typora\draftsRecover\note.md'), (Join-Path $local 'Microsoft\VisualStudio\17.0_abc123\privateregistry.bin'),
             (Join-Path $profileRoot '.rustup\toolchains\stable\bin\rustc.exe'), (Join-Path $profileRoot '.texlive2024\texmf-config\tex\a.cfg'),
             (Join-Path $roaming 'obs-studio\basic\scenes\Untitled.json'), (Join-Path $profileRoot '.config\clash\config.yaml'),
@@ -290,8 +293,8 @@ try {
         }
         finally { $env:APPDATA = $saved.APPDATA; $env:LOCALAPPDATA = $saved.LOCALAPPDATA; $env:USERPROFILE = $saved.USERPROFILE }
         $approved = @{
-            'teams-cache' = '\\EBWebView(\\Default)?\\(Cache|Code Cache|GPUCache)$'; 'adrive-cache' = '\\aDrive\\(Cache|Code Cache|GPUCache)$'
-            'typora-cache' = '\\Typora\\(Cache|Code Cache|GPUCache)$'; 'visualstudio-cache' = '\\VisualStudio\\1[67]\.0_[^\\]+\\(ComponentModelCache|Designer\\ShadowCache)$'
+            'teams-cache' = '\\(EBWebView(\\Default)?|Microsoft\\Teams)\\(Cache|Code Cache|GPUCache)$'; 'adrive-cache' = '\\aDrive\\(Cache|Code Cache|GPUCache)$'
+            'typora-cache' = '\\Typora\\(Cache|Code Cache|GPUCache)$'; 'visualstudio-cache' = '\\VisualStudio\\1[5-7]\.0_[^\\]+\\(ComponentModelCache|Designer\\ShadowCache)$'
             'rustup-temp' = '\\\.rustup\\(downloads|tmp)$'; 'texlive-luatex-cache' = '\\\.texlive[^\\]*\\texmf-var\\luatex-cache$'
             'java-deployment-cache' = '\\Sun\\Java\\Deployment\\cache$'; 'user-error-reports' = '\\WER\\(ReportArchive|ReportQueue)$'
             'wemeet-old-logs' = '\\WeMeet\\(Global\\)?Logs$'; 'obs-old-logs' = '\\obs-studio\\(logs|crashes)$'
@@ -318,6 +321,63 @@ try {
         }
         foreach ($path in $gone) { Assert-True (-not (Test-Path -LiteralPath $path)) ('Not cleaned: ' + $path) }
         foreach ($path in $keep) { Assert-True (Test-Path -LiteralPath $path) ('User data deleted: ' + $path) }
+        'removed={0}, kept={1}' -f $gone.Count, $keep.Count
+    }
+
+    Invoke-Case 'Developer toolchain and media app items clean only rebuildable caches' {
+        $profileRoot = Join-Path $fixtureRoot 'profile3'
+        $roaming = Join-Path $profileRoot 'AppData\Roaming'
+        $local = Join-Path $profileRoot 'AppData\Local'
+        $gone = New-Object System.Collections.Generic.List[string]
+        $keep = New-Object System.Collections.Generic.List[string]
+        foreach ($path in @(
+            (Join-Path $local 'go-build\ab\abcdef-d'), (Join-Path $profileRoot '.julia\compiled\v1.9\Example\abc.ji'),
+            (Join-Path $profileRoot '.ivy2\cache\org.scala-lang\scala-library\jars\scala-library-2.13.10.jar'),
+            (Join-Path $local 'Coursier\Cache\v1\https\repo1.maven.org\x.jar'), (Join-Path $local 'Yarn\Cache\v6\npm-left-pad-1.3.0\package.json'),
+            (Join-Path $profileRoot '.cpanm\work\1690000000.1234\build.log'), (Join-Path $roaming 'Tencent\QQ\Temp\preview.tmp'),
+            (Join-Path $roaming 'lx-music-desktop\Cache\Cache_Data\f_1'), (Join-Path $roaming 'Motrix\GPUCache\data_0'),
+            (Join-Path $roaming 'Mathpix Snipping Tool\Code Cache\js\a'))) { $gone.Add((New-SizedFile $path 1KB)) }
+        foreach ($path in @(
+            (Join-Path $profileRoot 'go\pkg\mod\cache\download\x.zip'), (Join-Path $profileRoot '.julia\packages\Example\abc\src\Example.jl'),
+            (Join-Path $profileRoot '.julia\environments\v1.9\Project.toml'), (Join-Path $profileRoot '.ivy2\local\my\artifact.jar'),
+            (Join-Path $profileRoot '.cpanm\build.log'), (Join-Path $roaming 'Tencent\QQ\Misc\config.dat'),
+            (Join-Path $roaming 'lx-music-desktop\LxDatas\playList.json'), (Join-Path $roaming 'Motrix\download.session'),
+            (Join-Path $roaming 'IDM\DwnlData\user\file_123\file.part'))) { $keep.Add((New-SizedFile $path 1KB -AgeDays 40)) }
+        $jetbrainsCache = New-SizedFile (Join-Path $local 'JetBrains\IdeaIC2022.2\caches\content.dat') 1KB
+        $saved = @{ APPDATA = $env:APPDATA; LOCALAPPDATA = $env:LOCALAPPDATA; USERPROFILE = $env:USERPROFILE }
+        try {
+            $env:APPDATA = $roaming; $env:LOCALAPPDATA = $local; $env:USERPROFILE = $profileRoot
+            $list = New-Object Collections.ArrayList
+            Add-DeveloperAndMediaCleanupItems -List $list
+            $jetbrainsSpecs = @(Get-JetBrainsPathSpecs)
+        }
+        finally { $env:APPDATA = $saved.APPDATA; $env:LOCALAPPDATA = $saved.LOCALAPPDATA; $env:USERPROFILE = $saved.USERPROFILE }
+        Assert-True (@($jetbrainsSpecs | Where-Object { $_.Path -like '*\IdeaIC2022.2\caches' }).Count -eq 1) 'IntelliJ IDEA Community cache not recognised.'
+        $approved = @{
+            'go-build-cache' = '\\AppData\\Local\\go-build$'; 'julia-compiled-cache' = '\\\.julia\\compiled$'
+            'scala-dependency-cache' = '(\\\.ivy2\\cache|\\Coursier\\Cache|\\\.cache\\coursier)$'; 'yarn-cache' = '\\Yarn\\Cache$'
+            'cpanm-work' = '\\\.cpanm\\work$'; 'qq-legacy-temp' = '\\Tencent\\QQ\\Temp$'
+            'lx-music-cache' = '\\lx-music-desktop\\(Cache|Code Cache|GPUCache)$'; 'motrix-cache' = '\\Motrix\\(Cache|Code Cache|GPUCache)$'
+            'mathpix-cache' = '\\(Mathpix Snipping Tool|mathpix-snipping-tool)\\(Cache|Code Cache|GPUCache)$'
+        }
+        $manual = @('manage-go-modules', 'manage-bluestacks', 'manage-idm-temp')
+        Assert-True ($list.Count -eq ($approved.Count + $manual.Count)) ('Unexpected item count ' + $list.Count)
+        foreach ($item in $list) {
+            Assert-True (-not $item.DefaultSelected -and -not $item.RequiresAdmin) ('Default selected or admin: ' + $item.Id)
+            if ($manual -contains $item.Id) { Assert-True ($item.Action -eq 'Manage') ('Data item is not manual: ' + $item.Id); continue }
+            Assert-True ($approved.ContainsKey($item.Id) -and $item.Action -eq 'Paths' -and $item.ProcessNames.Count -gt 0) ('Unreviewed item ' + $item.Id)
+            Assert-True (-not (Test-ScheduleSafeItem $item)) ('Cache item must not be on the daily schedule: ' + $item.Id)
+            Assert-True (@($item.PathSpecs).Count -gt 0) ('Fixture not discovered for ' + $item.Id)
+            foreach ($spec in @($item.PathSpecs)) {
+                Assert-True ($spec.Path -match $approved[$item.Id]) ('Unapproved path for ' + $item.Id + ': ' + $spec.Path)
+                Assert-True ($spec.Path.StartsWith($profileRoot + '\', [StringComparison]::OrdinalIgnoreCase)) ('Path escaped fixture: ' + $spec.Path)
+            }
+            $item.ProcessNames = @()
+            [void](Invoke-CleanupAction -Item $item)
+        }
+        foreach ($path in $gone) { Assert-True (-not (Test-Path -LiteralPath $path)) ('Not cleaned: ' + $path) }
+        foreach ($path in $keep) { Assert-True (Test-Path -LiteralPath $path) ('User data deleted: ' + $path) }
+        Assert-True (Test-Path -LiteralPath $jetbrainsCache) 'JetBrains fixture touched without being selected.'
         'removed={0}, kept={1}' -f $gone.Count, $keep.Count
     }
 
