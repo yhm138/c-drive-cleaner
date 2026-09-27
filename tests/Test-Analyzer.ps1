@@ -196,6 +196,65 @@ try {
         'eligible: ' + (($eligible | ForEach-Object { $_.Id }) -join ', ')
     }
 
+    Invoke-Case 'App data items clean only caches and old logs of QQ, Doubao, TRAE, Codex, Claude and Antigravity' {
+        $profileRoot = Join-Path $fixtureRoot 'profile'
+        $roaming = Join-Path $profileRoot 'AppData\Roaming'
+        $local = Join-Path $profileRoot 'AppData\Local'
+        $keep = New-Object System.Collections.Generic.List[string]
+        $gone = New-Object System.Collections.Generic.List[string]
+        # Rebuildable content that must be removed.
+        foreach ($leaf in @('QQ\Cache\a.bin', 'QQ\GPUCache\b.bin', 'Doubao\Code Cache\c.bin', 'Trae\CachedData\d.bin', 'Trae\CachedExtensionVSIXs\e.vsix', 'Antigravity\GPUCache\f.bin', 'Antigravity IDE\Cache\g.bin')) {
+            $gone.Add((New-SizedFile (Join-Path $roaming $leaf) 1KB))
+        }
+        foreach ($leaf in @('QQ\logs\old.log', 'Doubao\logs\old.log', 'Antigravity\logs\20250101\main.log', 'Claude\logs\mcp.log')) {
+            $gone.Add((New-SizedFile (Join-Path $roaming $leaf) 1KB -AgeDays 40))
+        }
+        $gone.Add((New-SizedFile (Join-Path $local 'Doubao\User Data\Default\Cache\h.bin') 1KB))
+        $gone.Add((New-SizedFile (Join-Path $profileRoot '.codex\log\codex-tui.log') 1KB -AgeDays 40))
+        $gone.Add((New-SizedFile (Join-Path $profileRoot '.claude\debug\session.txt') 1KB -AgeDays 40))
+        # User data, history and recent logs that must survive.
+        foreach ($leaf in @('QQ\logs\recent.log', 'Claude\logs\recent.log')) { $keep.Add((New-SizedFile (Join-Path $roaming $leaf) 1KB -AgeDays 1)) }
+        foreach ($leaf in @('QQ\Local Storage\leveldb\000003.log', 'Doubao\Models\model.bin', 'Trae\User\workspaceStorage\x\state.vscdb', 'Antigravity\User\globalStorage\state.vscdb', 'Claude\claude_desktop_config.json')) {
+            $keep.Add((New-SizedFile (Join-Path $roaming $leaf) 1KB -AgeDays 40))
+        }
+        foreach ($leaf in @('.codex\sessions\2025\01\01\rollout.jsonl', '.codex\config.toml', '.claude\projects\p\session.jsonl', '.claude\settings.json', '.gemini\antigravity\conversations\c.pb', '.gemini\antigravity\brain\b\plan.md')) {
+            $keep.Add((New-SizedFile (Join-Path $profileRoot $leaf) 1KB -AgeDays 40))
+        }
+        $saved = @{ APPDATA = $env:APPDATA; LOCALAPPDATA = $env:LOCALAPPDATA; USERPROFILE = $env:USERPROFILE }
+        try {
+            $env:APPDATA = $roaming; $env:LOCALAPPDATA = $local; $env:USERPROFILE = $profileRoot
+            $list = New-Object Collections.ArrayList
+            Add-AppDataCleanupItems -List $list
+        }
+        finally { $env:APPDATA = $saved.APPDATA; $env:LOCALAPPDATA = $saved.LOCALAPPDATA; $env:USERPROFILE = $saved.USERPROFILE }
+        $approved = @{
+            'qq-ordinary-cache' = '\\(Cache|Code Cache|GPUCache)$'; 'doubao-ordinary-cache' = '\\(Cache|Code Cache|GPUCache)$'
+            'trae-cache' = '\\(Cache|CachedData|Code Cache|GPUCache|CachedExtensionVSIXs)$'; 'antigravity-cache' = '\\(Cache|CachedData|Code Cache|GPUCache|CachedExtensionVSIXs)$'
+            'qq-old-logs' = '\\(logs|Logs|log)$'; 'doubao-old-logs' = '\\(logs|log)$'; 'antigravity-old-logs' = '\\logs$'
+            'codex-cli-logs' = '\\\.codex\\log$'; 'claude-old-logs' = '\\Claude\\logs$'; 'claude-code-debug-logs' = '\\\.claude\\debug$'
+        }
+        $manual = @('manage-qq-files', 'manage-doubao-data', 'manage-antigravity-data', 'manage-codex-sessions', 'manage-claude-code-history')
+        Assert-True ($list.Count -eq ($approved.Count + $manual.Count)) ('Unexpected item count ' + $list.Count)
+        $script:LogKeepDays = 7
+        $script:PolicyReferenceUtc = [datetime]::UtcNow
+        foreach ($item in $list) {
+            Assert-True (-not $item.DefaultSelected) ('Default selected: ' + $item.Id)
+            if ($manual -contains $item.Id) { Assert-True ($item.Action -eq 'Manage') ('History item is not manual: ' + $item.Id); continue }
+            Assert-True ($approved.ContainsKey($item.Id) -and $item.Action -eq 'Paths' -and $item.Risk -eq '低') ('Unreviewed item ' + $item.Id)
+            Assert-True ($item.ProcessNames.Count -gt 0) ('No process guard: ' + $item.Id)
+            if ($item.Id -like '*logs') { Assert-True ($item.UseLogRetention -and (Test-ScheduleSafeItem $item)) ('Log item not retention/schedule safe: ' + $item.Id) }
+            foreach ($spec in @($item.PathSpecs)) {
+                Assert-True ($spec.Path -match $approved[$item.Id]) ('Unapproved path for ' + $item.Id + ': ' + $spec.Path)
+                Assert-True ($spec.Path.StartsWith($profileRoot + '\', [StringComparison]::OrdinalIgnoreCase)) ('Path escaped fixture: ' + $spec.Path)
+            }
+            $item.ProcessNames = @()
+            [void](Invoke-CleanupAction -Item $item)
+        }
+        foreach ($path in $gone) { Assert-True (-not (Test-Path -LiteralPath $path)) ('Not cleaned: ' + $path) }
+        foreach ($path in $keep) { Assert-True (Test-Path -LiteralPath $path) ('User data deleted: ' + $path) }
+        'removed={0}, kept={1}' -f $gone.Count, $keep.Count
+    }
+
     Invoke-Case 'Schedule configuration round-trips and sanitises input' {
         Save-ScheduleConfig -Config ([pscustomobject]@{ Enabled = $true; Time = '07:45'; LogKeepDays = 30; ItemIds = @('trae-old-logs', 'bad id;rm') })
         $config = Get-ScheduleConfig

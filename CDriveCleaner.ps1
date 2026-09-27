@@ -382,6 +382,95 @@ function Add-ExtendedCleanupItems {
         -Description '打开已安装应用，按使用情况卸载或修改大型软件。工具链、虚拟机和已安装组件需通过所属程序管理，不作为普通缓存清空。'
 }
 
+function Get-AppLeafPathSpecs {
+    param([string[]]$Roots, [string[]]$Leaves)
+    # Only known leaf names under recognised application roots; nothing is searched recursively.
+    $paths = New-Object System.Collections.ArrayList
+    foreach ($root in @($Roots)) {
+        if (-not (Test-ExtendedSafeDirectory -Path $root)) { continue }
+        foreach ($leaf in @($Leaves)) { [void]$paths.Add((Join-Path $root $leaf)) }
+    }
+    Get-ExtendedLiteralPathSpecs -Paths @($paths.ToArray())
+}
+
+function Add-AppDataCleanupItems {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.ArrayList]$List)
+    $logPatterns = @('*.log', '*.xlog')
+
+    # QQ (QQNT is an Electron app; chat records live under Documents\Tencent Files and are never cleaned).
+    $qqRoots = @((Join-Path $env:APPDATA 'QQ'), (Join-Path $env:APPDATA 'Tencent\QQNT'))
+    $qqProfiles = @(Get-ExtendedElectronProfileRoots -Roots @($qqRoots | Where-Object { Test-ExtendedSafeDirectory -Path $_ }))
+    Add-CleanupItem -List $List -Id 'qq-ordinary-cache' -Name 'QQ 普通网页缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedElectronPathSpecs -ProfileRoots $qqProfiles) -ProcessNames @('QQ', 'QQNT') `
+        -Description '关闭 QQ 后清理客户端界面的网页、代码与图形缓存，打开时自动重建；不涉及聊天记录、数据库、图片视频和接收的文件。'
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $qqLogPaths = @((Join-Path $env:APPDATA 'Tencent\Logs'), (Join-Path $env:APPDATA 'QQ\logs'), (Join-Path $env:APPDATA 'Tencent\QQNT\logs'))
+    $tencentFiles = @()
+    if (-not [string]::IsNullOrWhiteSpace($documents)) { $tencentFiles = @((Join-Path $documents 'Tencent Files')) }
+    foreach ($root in $tencentFiles) {
+        foreach ($account in @(Get-ExtendedSafeChildDirectories -Path $root)) { $qqLogPaths += Join-Path $account 'nt_qq\nt_data\log' }
+    }
+    Add-CleanupItem -List $List -Id 'qq-old-logs' -Name 'QQ 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths $qqLogPaths) -UseLogRetention $true -FilePatterns $logPatterns -ProcessNames @('QQ', 'QQNT') -ScheduleSafe $true `
+        -Description '按保留天数清理 QQ 与各账号 nt_data\log 中的旧 .log/.xlog；不涉及聊天数据库、图片视频和接收的文件。先退出 QQ。'
+    Add-CleanupItem -List $List -Id 'manage-qq-files' -Name '手动管理：QQ 聊天文件与缓存' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths (@($tencentFiles) + @((Join-Path $env:APPDATA 'Tencent\QQNT')))) `
+        -Description '查看 QQ 的聊天记录、图片视频和接收文件目录，不参加清理。请在 QQ“设置 → 存储管理”中清理缓存或迁移存储位置；目录内含聊天数据库，不能整体删除。'
+
+    # 豆包 Doubao (Electron). Only ordinary caches and log files; models and downloads are managed in the app.
+    $doubaoRoots = @((Join-Path $env:APPDATA 'Doubao'), (Join-Path $env:LOCALAPPDATA 'Doubao'), (Join-Path $env:LOCALAPPDATA 'Doubao\User Data'), (Join-Path $env:LOCALAPPDATA 'Doubao\User Data\Default'))
+    $doubaoProfiles = @(Get-ExtendedElectronProfileRoots -Roots @($doubaoRoots | Where-Object { Test-ExtendedSafeDirectory -Path $_ }))
+    Add-CleanupItem -List $List -Id 'doubao-ordinary-cache' -Name '豆包 普通网页缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedElectronPathSpecs -ProfileRoots $doubaoProfiles) -ProcessNames @('Doubao', 'doubao') `
+        -Description '关闭豆包后清理网页、代码与图形缓存，打开时自动重建；不涉及登录状态、对话、下载的模型和生成的图片视频。'
+    Add-CleanupItem -List $List -Id 'doubao-old-logs' -Name '豆包 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $doubaoRoots -Leaves @('logs', 'log')) -UseLogRetention $true -FilePatterns $logPatterns -ProcessNames @('Doubao', 'doubao') -ScheduleSafe $true `
+        -Description '按保留天数清理豆包 logs 目录中的旧日志文件；近期日志保留。先退出豆包。'
+    Add-CleanupItem -List $List -Id 'manage-doubao-data' -Name '手动管理：豆包模型与生成内容' -Risk '中' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots @((Join-Path $env:APPDATA 'Doubao'), (Join-Path $env:LOCALAPPDATA 'Doubao')) -Leaves @('Models', 'models', 'Download', 'Downloads')) `
+        -Description '查看豆包下载的本地模型、生成或下载的内容，不参加清理。请在豆包设置中管理；删除模型后相关功能需要重新下载。'
+
+    # TRAE (VS Code fork): logs are handled by trae-old-logs; these are rebuildable caches.
+    $traeRoots = @('Trae', 'TRAE CN', 'Trae CN', 'TRAE SOLO', 'TRAE SOLO CN') | ForEach-Object { Join-Path $env:APPDATA $_ }
+    $codeForkLeaves = @('Cache', 'CachedData', 'Code Cache', 'GPUCache', 'CachedExtensionVSIXs')
+    Add-CleanupItem -List $List -Id 'trae-cache' -Name 'TRAE 缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $traeRoots -Leaves $codeForkLeaves) -ProcessNames @('Trae', 'Trae CN', 'TRAE SOLO', 'TRAE SOLO CN') `
+        -Description '关闭 TRAE 后清理网页、编译代码、图形和扩展安装包缓存，打开时重建；不涉及项目、会话记录、设置、扩展和 workspaceStorage。'
+
+    # Google Antigravity (VS Code fork).
+    $antigravityRoots = @((Join-Path $env:APPDATA 'Antigravity'), (Join-Path $env:APPDATA 'Antigravity IDE'))
+    $antigravityProcesses = @('Antigravity', 'Antigravity IDE', 'antigravity')
+    Add-CleanupItem -List $List -Id 'antigravity-cache' -Name 'Antigravity 缓存' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $antigravityRoots -Leaves $codeForkLeaves) -ProcessNames $antigravityProcesses `
+        -Description '关闭 Antigravity 后清理网页、编译代码、图形和扩展安装包缓存；不涉及对话、brain 计划与产出、设置和扩展。'
+    Add-CleanupItem -List $List -Id 'antigravity-old-logs' -Name 'Antigravity 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $antigravityRoots -Leaves @('logs')) -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames $antigravityProcesses -ScheduleSafe $true `
+        -Description '按保留天数清理 Antigravity logs 中的旧 .log，近期日志保留。先关闭 Antigravity。'
+    Add-CleanupItem -List $List -Id 'manage-antigravity-data' -Name '手动管理：Antigravity 对话与产出' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.gemini\antigravity'))) `
+        -Description '查看 ~/.gemini/antigravity（conversations 对话、brain 中的计划与产出、浏览器录制等），不参加清理。请在 Antigravity 中删除不需要的对话；直接删除文件会让历史记录无法打开。'
+
+    # OpenAI Codex CLI. The desktop app's logs are covered by codex-old-logs.
+    Add-CleanupItem -List $List -Id 'codex-cli-logs' -Name 'Codex CLI 旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.codex\log'))) -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('codex') -ScheduleSafe $true `
+        -Description '按保留天数清理 ~/.codex/log 中的旧 .log（如 codex-tui.log）；正在写入的近期日志保留。不涉及 sessions 任务记录、配置和登录信息。'
+    Add-CleanupItem -List $List -Id 'manage-codex-sessions' -Name '手动管理：Codex 任务记录' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.codex\sessions'), (Join-Path $env:USERPROFILE '.codex\archived_sessions'))) `
+        -Description '查看 Codex 的会话记录（rollout 文件），不参加清理。删除后无法恢复或继续这些会话；如需回收空间，只删除确认不再需要的旧日期目录。'
+
+    # Claude desktop app and Claude Code.
+    $claudeRoots = @(Get-ExtendedAppRoots -PackagePattern 'Claude_*' -PackageRelativePath 'LocalCache\Roaming\Claude' -FallbackPaths @((Join-Path $env:APPDATA 'Claude')))
+    Add-CleanupItem -List $List -Id 'claude-old-logs' -Name 'Claude 桌面版旧运行日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-AppLeafPathSpecs -Roots $claudeRoots -Leaves @('logs')) -UseLogRetention $true -FilePatterns @('*.log') -ProcessNames @('Claude') -ScheduleSafe $true `
+        -Description '按保留天数清理 Claude 桌面版 logs 中的旧 .log（含 MCP 服务日志），近期日志保留。不涉及对话、配置和扩展。先退出 Claude。'
+    Add-CleanupItem -List $List -Id 'claude-code-debug-logs' -Name 'Claude Code 旧调试日志' -Risk '低' -DefaultSelected $false -RequiresAdmin $false -Action 'Paths' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.claude\debug'))) -UseLogRetention $true -FilePatterns @('*.txt', '*.log') -ProcessNames @('claude') -ScheduleSafe $true `
+        -Description '按保留天数清理 ~/.claude/debug 中的旧调试日志；不涉及 projects 会话记录、设置、记忆和插件。'
+    Add-CleanupItem -List $List -Id 'manage-claude-code-history' -Name '手动管理：Claude Code 会话记录' -Risk '高' -DefaultSelected $false -RequiresAdmin $false -Action 'Manage' `
+        -PathSpecs @(Get-ExtendedLiteralPathSpecs -Paths @((Join-Path $env:USERPROFILE '.claude\projects'), (Join-Path $env:USERPROFILE '.claude\file-history'))) `
+        -Description '查看 Claude Code 的会话记录与文件历史，不参加清理。Claude Code 会按 settings.json 中的 cleanupPeriodDays（默认 30 天）自动删除旧会话，可调小该值；手动删除后无法 --resume 这些会话。'
+}
+
 
 function Get-CleanupCatalog {
     $list = New-Object System.Collections.ArrayList
@@ -512,6 +601,7 @@ function Get-CleanupCatalog {
         -Description '通常可释放大量空间，但会关闭休眠、快速启动及其他依赖休眠文件的功能。可稍后用 powercfg /hibernate on 恢复。'
 
     Add-ExtendedCleanupItems -List $list
+    Add-AppDataCleanupItems -List $list
     return @($list)
 }
 
@@ -3593,7 +3683,7 @@ function Invoke-SelectedCleanup {
         $estimated += [Int64]$row.Tag.EstimatedBytes
         $nameLines += '• ' + $row.Tag.Name
     }
-    $message = "微信、TRAE、Wolfram、Codex、Clash 旧日志项目保留最近 $script:LogKeepDays 天；Windows 安装监控日志保留至少 30 天。`r`n`r`n将清理以下项目：`r`n`r`n" + ($nameLines -join "`r`n") + "`r`n`r`n预计释放（存储大小估算）：" + (Format-ByteSize $estimated) + "`r`n实际结果可能因占用、共享文件和应用重新写入而不同。删除的缓存无法直接撤销，是否继续？"
+    $message = "所有“旧运行日志”项目保留最近 $script:LogKeepDays 天；Windows 安装监控日志保留至少 30 天。`r`n`r`n将清理以下项目：`r`n`r`n" + ($nameLines -join "`r`n") + "`r`n`r`n预计释放（存储大小估算）：" + (Format-ByteSize $estimated) + "`r`n实际结果可能因占用、共享文件和应用重新写入而不同。删除的缓存无法直接撤销，是否继续？"
     $confirm = [Windows.Forms.MessageBox]::Show($message, '确认清理', 'YesNo', 'Warning')
     if ($confirm -ne [Windows.Forms.DialogResult]::Yes) { return }
 
