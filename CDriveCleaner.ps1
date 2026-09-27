@@ -3683,7 +3683,7 @@ function Invoke-SelectedCleanup {
         $estimated += [Int64]$row.Tag.EstimatedBytes
         $nameLines += '• ' + $row.Tag.Name
     }
-    $message = "所有“旧运行日志”项目保留最近 $script:LogKeepDays 天；Windows 安装监控日志保留至少 30 天。`r`n`r`n将清理以下项目：`r`n`r`n" + ($nameLines -join "`r`n") + "`r`n`r`n预计释放（存储大小估算）：" + (Format-ByteSize $estimated) + "`r`n实际结果可能因占用、共享文件和应用重新写入而不同。删除的缓存无法直接撤销，是否继续？"
+    $message = "所有旧运行日志项目保留最近 $script:LogKeepDays 天；Windows 安装监控日志保留至少 30 天。`r`n`r`n将清理以下项目：`r`n`r`n" + ($nameLines -join "`r`n") + "`r`n`r`n预计释放（存储大小估算）：" + (Format-ByteSize $estimated) + "`r`n实际结果可能因占用、共享文件和应用重新写入而不同。删除的缓存无法直接撤销，是否继续？"
     $confirm = [Windows.Forms.MessageBox]::Show($message, '确认清理', 'YesNo', 'Warning')
     if ($confirm -ne [Windows.Forms.DialogResult]::Yes) { return }
 
