@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cleanup regression tests
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\tests\Test-Cleanup.ps1
+      - name: Numeric size sorting
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\tests\Test-SizeSort.ps1
+      - name: Construct interface
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File .\CDriveCleaner.ps1 -UiSmokeTest
+      - name: Build release archive
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $asset = "dist\CDriveCleaner-$env:TAG.zip"
+          Copy-Item -LiteralPath 'dist\CDriveCleaner.zip' -Destination $asset -Force
+          $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -LiteralPath "$asset.sha256" -Value ("{0}  CDriveCleaner-{1}.zip" -f $hash, $env:TAG) -Encoding ASCII
+          $notes = ".github\release-notes\$env:TAG.md"
+          if (Test-Path -LiteralPath $notes) {
+            gh release create $env:TAG $asset "$asset.sha256" --title "C 盘清理助手 $env:TAG" --notes-file $notes
+          } else {
+            gh release create $env:TAG $asset "$asset.sha256" --title "C 盘清理助手 $env:TAG" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed: $LASTEXITCODE" }
