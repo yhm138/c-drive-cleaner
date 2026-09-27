@@ -32,6 +32,9 @@ jobs:
       - name: Build release archive
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Build-Release.ps1
       - name: Publish GitHub release
+        # pwsh reads the generated step script as UTF-8; Windows PowerShell 5.1 would
+        # decode it as ANSI and garble the Chinese release title.
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
@@ -39,14 +42,22 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:TAG -notmatch '^v\d+\.\d+\.\d+$') { throw "Invalid release tag: $env:TAG" }
-          $asset = "dist\CDriveCleaner-$env:TAG.zip"
-          Copy-Item -LiteralPath 'dist\CDriveCleaner.zip' -Destination $asset -Force
+          $asset = "dist/CDriveCleaner-$env:TAG.zip"
+          Copy-Item -LiteralPath 'dist/CDriveCleaner.zip' -Destination $asset -Force
           $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          Set-Content -LiteralPath "$asset.sha256" -Value ("{0}  CDriveCleaner-{1}.zip" -f $hash, $env:TAG) -Encoding ASCII
-          $notes = ".github\release-notes\$env:TAG.md"
-          if (Test-Path -LiteralPath $notes) {
-            gh release create $env:TAG $asset "$asset.sha256" --target $env:TARGET --title "C 盘清理助手 $env:TAG" --notes-file $notes
+          Set-Content -LiteralPath "$asset.sha256" -Value ("{0}  CDriveCleaner-{1}.zip" -f $hash, $env:TAG) -Encoding ascii
+          $title = "C 盘清理助手 $env:TAG"
+          $notes = ".github/release-notes/$env:TAG.md"
+          $notesArgs = if (Test-Path -LiteralPath $notes) { @('--notes-file', $notes) } else { @('--generate-notes') }
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            # Re-running for an existing release refreshes its title, notes and assets.
+            $editNotes = if (Test-Path -LiteralPath $notes) { @('--notes-file', $notes) } else { @() }
+            gh release edit $env:TAG --title $title @editNotes
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit failed: $LASTEXITCODE" }
+            gh release upload $env:TAG $asset "$asset.sha256" --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed: $LASTEXITCODE" }
           } else {
-            gh release create $env:TAG $asset "$asset.sha256" --target $env:TARGET --title "C 盘清理助手 $env:TAG" --generate-notes
+            gh release create $env:TAG $asset "$asset.sha256" --target $env:TARGET --title $title @notesArgs
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed: $LASTEXITCODE" }
           }
-          if ($LASTEXITCODE -ne 0) { throw "gh release create failed: $LASTEXITCODE" }
