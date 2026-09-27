@@ -4004,16 +4004,19 @@ function Set-AnalysisListData {
     finally { $List.EndUpdate() }
 }
 
+function Sort-AnalysisList {
+    param([Windows.Forms.ListView]$List, [int]$Column)
+    # Sorts the underlying values (bytes, counts, dates), not the formatted text.
+    $state = $List.Tag
+    if ($state.SortColumn -eq $Column) { $state.Descending = -not $state.Descending }
+    else { $state.SortColumn = $Column; $state.Descending = $true }
+    $key = $state.Keys[$Column]
+    $sorted = @($state.Data | Sort-Object -Property @{ Expression = $key; Descending = $state.Descending })
+    Set-AnalysisListData -List $List -Data $sorted
+}
+
 foreach ($analysisList in $script:AnalysisLists) {
-    $analysisList.Add_ColumnClick({
-        param($sender, $eventArgs)
-        $state = $sender.Tag
-        if ($state.SortColumn -eq $eventArgs.Column) { $state.Descending = -not $state.Descending }
-        else { $state.SortColumn = $eventArgs.Column; $state.Descending = $true }
-        $key = $state.Keys[$eventArgs.Column]
-        $sorted = @($state.Data | Sort-Object -Property @{ Expression = $key; Descending = $state.Descending })
-        Set-AnalysisListData -List $sender -Data $sorted
-    })
+    $analysisList.Add_ColumnClick({ param($sender, $eventArgs) Sort-AnalysisList -List $sender -Column $eventArgs.Column })
     $analysisList.Add_SelectedIndexChanged({ $script:AnalysisFocus = 'List'; Update-AnalysisSelection })
     $analysisList.Add_DoubleClick({ $script:AnalysisFocus = 'List'; Open-AnalysisLocation })
 }
