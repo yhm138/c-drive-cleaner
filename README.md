@@ -8,6 +8,20 @@
 - **空间分析**：类似 WizTree，管理员模式下直接读取 NTFS 主文件表，数秒到十几秒分析整个 C 盘，找出大文件、大量小文件的文件夹，并给出删除建议。
 - **定时清理**：每天自动清理完全无风险的项目（旧运行日志、7 天前的临时文件）。
 
+## 截图
+
+**清理项目**：按预计可释放空间排序，显示风险、是否需要管理员、运行状态和每项的清理范围。
+
+![清理项目](docs/screenshots/cleanup-items.webp)
+
+**空间分析**：左侧为按占用排序的目录树，右侧为删除建议、最大文件、大量小文件和文件类型。截图为普通模式下的多线程枚举（约 148 万个文件用时 17 秒）；以管理员身份运行时会直接读取 MFT，速度更快。
+
+![空间分析](docs/screenshots/space-analysis.webp)
+
+**定时清理**：只列出无风险项目，可设置每天运行时间和日志保留天数，并显示计划任务状态。
+
+![定时清理](docs/screenshots/scheduled-cleanup.webp)
+
 ## 运行
 
 1. 在 [Releases](https://github.com/yhm138/c-drive-cleaner/releases) 下载最新的 `CDriveCleaner-vX.Y.Z.zip`（或下载本仓库 **Code → Download ZIP**），解压到本地。
