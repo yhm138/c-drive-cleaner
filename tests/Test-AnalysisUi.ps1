@@ -42,7 +42,7 @@ try {
     $onColumnClick.Invoke($largeFileList, @((New-Object Windows.Forms.ColumnClickEventArgs(3))))
     $onColumnClick.Invoke($largeFileList, @((New-Object Windows.Forms.ColumnClickEventArgs(3))))
     if ($largeFileList.Tag.SortColumn -ne 3 -or $largeFileList.Tag.Descending) { throw 'Column sort state wrong.' }
-    $onColumnClick.Invoke($denseList, @((New-Object Windows.Forms.ColumnClickEventArgs(0))))
+    Invoke-ColumnClick $denseList 0
     [void]$largeFileList.Handle
     $analysisTabs.SelectedIndex = 1
     $largeFileList.Items[0].Selected = $true
