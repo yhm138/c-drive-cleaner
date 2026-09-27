@@ -3894,8 +3894,6 @@ $analysisSplit = New-Object Windows.Forms.SplitContainer
 $analysisSplit.Dock = 'Fill'
 $analysisSplit.Orientation = 'Vertical'
 $analysisSplit.SplitterDistance = 440
-$analysisSplit.Panel1MinSize = 280
-$analysisSplit.Panel2MinSize = 420
 $analysisLayout.Controls.Add($analysisSplit, 0, 1)
 
 $dirTree = New-Object Windows.Forms.TreeView
