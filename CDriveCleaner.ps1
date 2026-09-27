@@ -1172,6 +1172,7 @@ public sealed class DiskAnalysisResult
     public long Errors;
     public double Seconds;
     public string FallbackReason = "";
+    public string Timings = "";
     private string[] pathCache;
 
     public string GetPath(int index)
@@ -1292,6 +1293,19 @@ public sealed class DiskAnalyzer
     private Dictionary<string, DiskExtStat> extensions;
     private long errors;
     private long clusterSize = 4096;
+    private System.Diagnostics.Stopwatch phaseClock = new System.Diagnostics.Stopwatch();
+    private StringBuilder timings = new StringBuilder();
+
+    private void MarkPhase(string next)
+    {
+        if (phaseClock.IsRunning)
+        {
+            if (timings.Length > 0) timings.Append("；");
+            timings.Append(Phase).Append(' ').Append((phaseClock.ElapsedMilliseconds / 1000.0).ToString("0.0", CultureInfo.InvariantCulture)).Append('s');
+        }
+        Phase = next;
+        phaseClock.Restart();
+    }
 
     public DiskAnalysisResult Analyze(string root, bool preferMft, CancellationToken cancellation)
     {
@@ -1351,6 +1365,8 @@ public sealed class DiskAnalyzer
         large = new List<DiskFileEntry>();
         extensions = new Dictionary<string, DiskExtStat>(StringComparer.OrdinalIgnoreCase);
         errors = 0;
+        timings.Length = 0;
+        phaseClock.Reset();
         FilesScanned = 0;
         DirsScanned = 0;
         BytesRead = 0;
@@ -1478,7 +1494,7 @@ public sealed class DiskAnalyzer
     private DiskAnalysisResult AnalyzeMft(VolumeSource source, string rootDisplay)
     {
         Reset();
-        Phase = "读取 NTFS 引导扇区";
+        MarkPhase("读取 NTFS 引导扇区");
         byte[] boot = new byte[512];
         source.ReadExact(0, boot, 512);
         if (Encoding.ASCII.GetString(boot, 3, 8) != "NTFS    ") throw new InvalidDataException("不是 NTFS 分区");
@@ -1572,7 +1588,7 @@ public sealed class DiskAnalyzer
         dirIndex[5] = 0;
         dirParentRefs.Add(5);
 
-        Phase = "读取 MFT";
+        MarkPhase("读取 MFT");
         int chunkBytes = (int)Math.Max(cluster, (4 * 1024 * 1024 / cluster) * cluster);
         chunkBytes -= chunkBytes % recordSize;
         if (chunkBytes <= 0) chunkBytes = recordSize;
@@ -1613,7 +1629,7 @@ public sealed class DiskAnalyzer
             vcnBytes += runBytes;
         }
 
-        Phase = "整理目录结构";
+        MarkPhase("整理目录结构");
         // Complete records whose attributes continue in extension records.
         foreach (KeyValuePair<long, RecordInfo> pair in partial)
         {
@@ -1981,7 +1997,7 @@ public sealed class DiskAnalyzer
     private DiskAnalysisResult AnalyzeEnumeration(string root)
     {
         Reset();
-        Phase = "多线程枚举目录";
+        MarkPhase("多线程枚举目录");
         DiskDirNode rootNode = new DiskDirNode();
         rootNode.Index = 0;
         rootNode.Name = root;
@@ -2103,7 +2119,7 @@ public sealed class DiskAnalyzer
     private DiskAnalysisResult Finish(string root, string mode)
     {
         token.ThrowIfCancellationRequested();
-        Phase = "汇总与生成建议";
+        MarkPhase("汇总与生成建议");
         DiskAnalysisResult result = new DiskAnalysisResult();
         result.Root = root.EndsWith("\\") ? root : root + "\\";
         result.Mode = mode;
@@ -2179,7 +2195,8 @@ public sealed class DiskAnalyzer
         ext.Sort(delegate (DiskExtStat x, DiskExtStat y) { return y.Alloc.CompareTo(x.Alloc); });
         result.Extensions = ext;
         DiskSuggestionRules.Build(result);
-        Phase = "完成";
+        MarkPhase("完成");
+        result.Timings = timings.ToString();
         return result;
     }
 
@@ -2619,6 +2636,7 @@ function Write-AnalysisReport {
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add(('分析完成：{0}，模式 {1}，{2:N0} 个文件，{3:N0} 个文件夹，占用 {4}，用时 {5:N1} 秒，无法读取 {6} 项' -f $Result.Root, $Result.Mode, $Result.TotalFiles, $Result.TotalDirs, (Format-ByteSize $Result.TotalAlloc), $Result.Seconds, $Result.Errors))
     if (-not [string]::IsNullOrWhiteSpace($Result.FallbackReason)) { $lines.Add('未使用 MFT 直读：' + $Result.FallbackReason) }
+    if (-not [string]::IsNullOrWhiteSpace($Result.Timings)) { $lines.Add('各阶段用时：' + $Result.Timings) }
     $lines.Add('')
     $lines.Add('[最大的文件夹]')
     foreach ($child in @($Result.GetChildren(0) | Select-Object -First $Top)) {
@@ -4048,6 +4066,7 @@ function Show-AnalysisResult {
     $analysisInfo.Text = '{0}：{1:N0} 个文件，{2:N0} 个文件夹，占用 {3}，用时 {4:N1} 秒{5}' -f $Result.Mode, $Result.TotalFiles, $Result.TotalDirs, (Format-ByteSize $Result.TotalAlloc), $Result.Seconds, $(if ($Result.Errors -gt 0) { '，{0:N0} 个位置无权限读取' -f $Result.Errors } else { '' })
     if (-not [string]::IsNullOrWhiteSpace($Result.FallbackReason)) { $analysisInfo.Text += '（未使用 MFT：' + $Result.FallbackReason + '）' }
     Write-AppLog ('空间分析完成：' + $analysisInfo.Text)
+    if (-not [string]::IsNullOrWhiteSpace($Result.Timings)) { Write-AppLog ('各阶段用时：' + $Result.Timings) }
 }
 
 $analysisTimer = New-Object Windows.Forms.Timer
